@@ -1,0 +1,479 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Willbanks Pricing</title>
+<style>
+  :root{--bg:#0f172a;--card:#fff;--ink:#0f172a;--muted:#64748b;--line:#e2e8f0;
+        --accent:#1d4ed8;--accent2:#dbeafe;--ok:#047857;--warn:#b45309;--warnbg:#fef3c7;}
+  *{box-sizing:border-box}
+  body{margin:0;font:15px/1.5 system-ui,Segoe UI,Roboto,sans-serif;color:var(--ink);background:#f1f5f9}
+  header{background:var(--bg);color:#fff;padding:16px 24px;display:flex;align-items:baseline;gap:14px}
+  header h1{font-size:18px;margin:0;font-weight:650;letter-spacing:.3px}
+  header .sub{color:#94a3b8;font-size:13px}
+  main{max-width:960px;margin:22px auto;padding:0 18px;display:grid;gap:18px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:18px 20px;
+        box-shadow:0 1px 2px rgba(15,23,42,.04)}
+  .card h2{font-size:14px;text-transform:uppercase;letter-spacing:.6px;color:var(--muted);margin:0 0 14px}
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px}
+  label{display:block;font-size:12px;color:var(--muted);margin-bottom:4px;font-weight:600}
+  select,input[type=number],input[type=text]{width:100%;padding:9px 10px;border:1px solid var(--line);
+        border-radius:8px;font:inherit;background:#fff}
+  select:disabled,input:disabled{background:#f1f5f9;color:#94a3b8}
+  select:focus,input:focus{outline:2px solid var(--accent2);border-color:var(--accent)}
+  .checks{display:flex;flex-wrap:wrap;gap:16px;margin-top:6px}
+  .checks label{display:flex;align-items:center;gap:7px;color:var(--ink);font-weight:500;font-size:14px}
+  .checks input{width:auto}
+  .row-actions{display:flex;gap:10px;margin-top:16px;flex-wrap:wrap;align-items:center}
+  button{font:inherit;font-weight:600;border:0;border-radius:8px;padding:10px 16px;cursor:pointer}
+  .primary{background:var(--accent);color:#fff}
+  .primary:hover{background:#1e40af}
+  .ghost{background:#eef2ff;color:var(--accent)}
+  .ghost:hover{background:#e0e7ff}
+  table{width:100%;border-collapse:collapse;font-size:14px}
+  th,td{text-align:left;padding:9px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+  th{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px}
+  td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
+  .total{font-size:20px;font-weight:700}
+  .bd{color:var(--muted);font-size:12.5px}
+  .sub2{color:var(--muted);font-size:12px}
+  .pill{display:inline-block;padding:2px 8px;border-radius:99px;font-size:12px;font-weight:600}
+  .pill.manual{background:var(--warnbg);color:var(--warn)}
+  .pos{display:inline-block;padding:1px 7px;border-radius:99px;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.3px}
+  .pos.long{background:#dcfce7;color:#166534}
+  .pos.short{background:#fee2e2;color:#991b1b}
+  .pos.balanced{background:#e2e8f0;color:#475569}
+  .pos.unknown{background:#f1f5f9;color:#94a3b8}
+  .floorwarn{color:#b91c1c;font-weight:700}
+  .muted{color:var(--muted)}
+  .foot{display:flex;justify-content:space-between;align-items:center;margin-top:14px;gap:12px;flex-wrap:wrap}
+  .basis{display:flex;gap:16px;align-items:center;font-size:13px;color:var(--muted);margin-bottom:12px;flex-wrap:wrap}
+  .basis label{display:inline-flex;align-items:center;gap:6px;color:var(--ink);font-weight:500;margin:0}
+  .basis input{width:auto}
+  .qmeta{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin-bottom:14px}
+  details.admin summary{cursor:pointer;font-weight:600;color:var(--muted)}
+  .intake{background:repeating-linear-gradient(45deg,#f8fafc,#f8fafc 10px,#f1f5f9 10px,#f1f5f9 20px);
+          border:1px dashed #cbd5e1;border-radius:10px;padding:18px;text-align:center;color:var(--muted)}
+  .msg{font-size:13px;margin-top:8px}
+  .msg.err{color:#b91c1c}.msg.ok{color:var(--ok)}
+  .printhead{display:none}
+  @media print{
+    body{background:#fff}
+    header,.no-print{display:none !important}
+    main{margin:0;max-width:100%}
+    .card{border:none;box-shadow:none;padding:0}
+    .printhead{display:block;margin-bottom:16px;border-bottom:2px solid var(--ink);padding-bottom:10px}
+    .printhead h1{margin:0;font-size:22px}
+    a[href]:after{content:""}
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>WILLBANKS &mdash; Quote Pricing</h1>
+  <span class="sub" id="meta"></span>
+</header>
+<main>
+  <div class="card no-print">
+    <h2>Enter what you&rsquo;re quoting</h2>
+    <div class="grid">
+      <div><label>Thickness</label><select id="thickness"></select></div>
+      <div><label>Grade</label><select id="grade"></select></div>
+      <div><label>Width</label><select id="width"></select></div>
+      <div><label id="lengthlabel">Length (inches)</label><input id="length" type="number" min="0" step="0.25" value="120"></div>
+      <div><label>Quantity</label><input id="qty" type="number" min="0" step="any" value="1"></div>
+      <div><label>Priced by</label>
+        <select id="unit">
+          <option value="pieces">Pieces</option>
+          <option value="lbs">Pounds (lbs)</option>
+          <option value="coil">Coils</option>
+          <option value="tl">Truckloads (TL)</option>
+        </select>
+      </div>
+    </div>
+    <div class="checks">
+      <label><input type="checkbox" id="custom"> Custom-cut length</label>
+      <span id="extras"></span>
+    </div>
+    <div class="row-actions">
+      <button class="primary" id="add">Add to quote &rarr;</button>
+      <button class="ghost" id="canceledit" style="display:none">Cancel edit</button>
+      <span class="msg err" id="formmsg"></span>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="printhead">
+      <h1>WILLBANKS METALS &mdash; Quote</h1>
+      <div id="printinfo" class="sub2"></div>
+    </div>
+    <h2 class="no-print">Quote</h2>
+    <div class="qmeta no-print">
+      <div><label>Customer / job (optional)</label><input id="customer" type="text" placeholder="e.g. Acme Fab - PO 4821"></div>
+      <div><label>Quote #</label><input id="quoteno" type="text" placeholder="optional"></div>
+    </div>
+    <div class="basis no-print">
+      Adders based on:
+      <label><input type="radio" name="basis" value="line" checked> Per line</label>
+      <label><input type="radio" name="basis" value="order"> Per order (combined weight)</label>
+      <span id="orderwt" class="sub2"></span>
+    </div>
+    <div class="basis no-print">
+      Weight units:
+      <label><input type="radio" name="wunit" value="lbs" checked> Pounds (lbs)</label>
+      <label><input type="radio" name="wunit" value="tons"> Tons</label>
+    </div>
+    <div class="basis no-print">
+      Ship to: <select id="dest" style="width:auto;padding:4px 8px"></select>
+      <span id="destnote" class="sub2"></span>
+    </div>
+    <div class="basis no-print" id="invrow" style="display:none">
+      <label><input type="checkbox" id="useinv"> Adjust price for inventory position</label>
+      <label style="gap:6px">Stance: <select id="stance" style="width:auto;padding:4px 8px"></select></label>
+      <span id="invnote" class="sub2"></span>
+    </div>
+    <table id="qtable">
+      <thead><tr>
+        <th>Item</th><th class="num" id="whead">Weight (lb)</th><th>Rate build-up</th>
+        <th class="num">$/cwt</th><th class="num">Line total</th><th class="no-print"></th>
+      </tr></thead>
+      <tbody id="qbody"></tbody>
+    </table>
+    <div class="foot">
+      <span class="muted" id="qempty">No lines yet &mdash; add one above.</span>
+      <span class="total" id="grand"></span>
+    </div>
+    <div class="row-actions no-print" id="qactions" style="display:none">
+      <button class="primary" id="savequote">Save quote</button>
+      <button class="ghost" id="print">Print / Save as PDF</button>
+      <button class="ghost" id="clear">Clear quote</button>
+      <span class="msg ok" id="savemsg"></span>
+    </div>
+  </div>
+
+  <div class="card no-print">
+    <h2>Saved quotes</h2>
+    <table id="savedtable">
+      <thead><tr><th>Date</th><th>Customer / job</th><th>Quote #</th><th>Ship to</th>
+        <th class="num">Lines</th><th class="num">Total</th><th></th></tr></thead>
+      <tbody id="savedbody"></tbody>
+    </table>
+    <div class="muted" id="savedempty">No saved quotes yet.</div>
+  </div>
+  <div class="card no-print">
+    <h2>Import a quote request <span class="muted" style="text-transform:none;font-weight:400">(coming soon)</span></h2>
+    <div class="intake">
+      Paste an email, or drop a PDF / Excel here &mdash; specs will be auto-extracted into quote lines.<br>
+      <span class="msg">This uses the same pricing engine; enabled once an AI key is configured.</span>
+    </div>
+  </div>
+
+  <div class="card no-print">
+    <details class="admin">
+      <summary>Admin</summary>
+      <div style="margin-top:14px" class="grid">
+        <div><label>Product key</label><input id="akey" type="text" placeholder="e.g. 14G-48-1011"></div>
+        <div><label>New price ($/cwt)</label><input id="aprice" type="number" step="0.01"></div>
+        <div style="align-self:end"><button class="ghost" id="save">Save price</button></div>
+        <div style="align-self:end"><button class="ghost" id="reimport">Re-import Excel</button></div>
+      </div>
+      <div class="msg" id="adminmsg"></div>
+      <hr style="border:none;border-top:1px solid var(--line);margin:16px 0">
+      <div style="font-weight:600;color:var(--muted);margin-bottom:8px">Inventory position rule</div>
+      <div class="grid">
+        <div><label>Long if &ge; (months)</label><input id="r_long" type="number" step="0.5"></div>
+        <div><label>Short if &le; (months)</label><input id="r_short" type="number" step="0.5"></div>
+        <div><label>Long adder ($/cwt)</label><input id="r_adjlong" type="number" step="0.25"></div>
+        <div><label>Short adder ($/cwt)</label><input id="r_adjshort" type="number" step="0.25"></div>
+        <div style="align-self:end"><button class="ghost" id="saverule">Save rule</button></div>
+        <div style="align-self:end"><button class="ghost" id="reimportinv">Re-import inventory</button></div>
+      </div>
+      <div class="msg" id="invmsg"></div>
+      <hr style="border:none;border-top:1px solid var(--line);margin:16px 0">
+      <div style="font-weight:600;color:var(--muted);margin-bottom:8px">Margin (CRU Spread over material cost)</div>
+      <div class="grid">
+        <div><label>HRC base $/cwt</label><input id="c_hrc" type="number" step="0.05"></div>
+        <div><label>Plate base 48&ndash;72"</label><input id="c_narrow" type="number" step="0.05"></div>
+        <div><label>Plate base 84&ndash;96"</label><input id="c_wide" type="number" step="0.05"></div>
+        <div><label>Plate base 120"</label><input id="c_120" type="number" step="0.05"></div>
+        <div><label>Min CRU Spread % (floor)</label><input id="c_minspread" type="number" step="1"></div>
+        <div style="align-self:end"><button class="ghost" id="savespread">Save cost settings</button></div>
+      </div>
+      <div class="grid" style="margin-top:10px">
+        <div><label>Product key (cost override)</label><input id="c_key" type="text" placeholder="e.g. 316-48-572-50"></div>
+        <div><label>Material cost $/cwt</label><input id="c_cost" type="number" step="0.01"></div>
+        <div style="align-self:end"><button class="ghost" id="savecost">Save cost</button></div>
+      </div>
+      <div class="msg" id="costmsg"></div>
+    </details>
+  </div>
+</main>
+<script>
+let DATA={products:[],extras:[]};
+const $=id=>document.getElementById(id);
+const uniq=a=>[...new Set(a)];
+const money=n=>"$"+n.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});
+const UNIT_LABEL={pieces:"pc",lbs:"lb",coil:"coil",tl:"TL"};
+let WEIGHT_UNIT="lbs";                       // display toggle: all weights shown in lbs or tons (lbs/2000)
+function wnum(lbs){                            // formatted weight number in the current unit
+  if(lbs==null) return "—";
+  return WEIGHT_UNIT==="tons" ? (lbs/2000).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})
+                              : Math.round(lbs).toLocaleString();
+}
+function wunit(){ return WEIGHT_UNIT==="tons" ? "tons" : "lbs"; }
+function wbasis(s){                            // convert "46,000 lb" figures inside a basis string to tons
+  if(!s || WEIGHT_UNIT!=="tons") return s||"";
+  return s.replace(/([\d,]+(?:\.\d+)?)\s*lb\b/g,(m,n)=>(parseFloat(n.replace(/,/g,""))/2000)
+      .toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})+" tons");
+}
+
+async function boot(){
+  DATA=await (await fetch("/api/bootstrap")).json();
+  const mt=DATA.meta||{};
+  $("meta").textContent = mt.source_workbook
+     ? ("Source: "+mt.source_workbook+(mt.last_import?" · imported "+mt.last_import.slice(0,10):"")) : "";
+  $("extras").innerHTML = DATA.extras.map(e=>
+     '<label><input type="checkbox" class="ex" value="'+e.name+'"> '+e.name+" (+$"+e.adder_cwt.toFixed(2)+")</label>").join("");
+  const prevDest=$("dest").value;
+  $("dest").innerHTML='<option value="">Local (no freight)</option>'+
+     (DATA.freight||[]).map(f=>'<option value="'+f.destination+'">'+f.destination+" (+$"+f.cwt.toFixed(2)+"/cwt)</option>").join("");
+  if(prevDest) $("dest").value=prevDest;
+  const rule=DATA.inv_rule||{};
+  $("invrow").style.display=DATA.inventory_loaded?"":"none";
+  if(DATA.inventory_loaded){
+    const profs=Object.keys(DATA.inv_profiles||{}).concat(["Custom"]);
+    $("stance").innerHTML=profs.map(p=>"<option"+(p===DATA.inv_active_profile?" selected":"")+">"+p+"</option>").join("");
+    const im=DATA.inventory_meta||{};
+    let age="";
+    if(im.as_of){age=" · as of "+im.as_of.slice(0,10)+(im.days_old!=null?" ("+im.days_old+"d old)":"");}
+    const staleChip=im.stale?' <span class="pos short">STALE &gt;'+im.stale_days+"d</span>":"";
+    $("invnote").innerHTML="long ≥"+rule.long_months+"mo → $"+rule.adj_long_cwt.toFixed(2)
+      +"/cwt, short ≤"+rule.short_months+"mo → +$"+rule.adj_short_cwt.toFixed(2)+age+staleChip;
+  }
+  if($("r_long")){$("r_long").value=rule.long_months;$("r_short").value=rule.short_months;
+    $("r_adjlong").value=rule.adj_long_cwt;$("r_adjshort").value=rule.adj_short_cwt;}
+  if($("c_minspread")&&DATA.cost_config){const cc=DATA.cost_config;
+    $("c_minspread").value=cc.min_spread_pct;$("c_hrc").value=cc.hrc;
+    $("c_narrow").value=cc.plate_narrow;$("c_wide").value=cc.plate_wide;$("c_120").value=cc.plate_120;}
+  fillThickness();
+}
+function orderBy(prods,field){
+  const m=new Map();
+  prods.forEach(p=>{ if(!m.has(p[field])) m.set(p[field], field==="thickness"?p.thickness_in:p.width_num); });
+  return [...m.keys()].sort((a,b)=>{
+     const na=m.get(a), nb=m.get(b);
+     if(na!=null&&nb!=null) return na-nb;
+     return String(a).localeCompare(String(b),undefined,{numeric:true});
+  });
+}
+function fillThickness(){
+  $("thickness").innerHTML=orderBy(DATA.products,"thickness").map(t=>"<option>"+t+"</option>").join("");
+  fillGrade();
+}
+function fillGrade(){
+  const t=$("thickness").value;
+  const grades=uniq(DATA.products.filter(p=>p.thickness===t).map(p=>p.grade))
+      .sort((a,b)=>String(a).localeCompare(String(b),undefined,{numeric:true}));
+  $("grade").innerHTML=grades.map(g=>"<option>"+g+"</option>").join("");
+  fillWidth();
+}
+function fillWidth(){
+  const t=$("thickness").value,g=$("grade").value;
+  const rows=DATA.products.filter(p=>p.thickness===t&&p.grade===g);
+  $("width").innerHTML=orderBy(rows,"width").map(w=>"<option>"+(w===null?"":w)+"</option>").join("");
+}
+$("thickness").onchange=fillGrade;
+$("grade").onchange=fillWidth;
+
+function unitChanged(){
+  // Length stays editable in every mode; it is simply ignored unless pricing by the piece.
+  const isPieces=$("unit").value==="pieces";
+  $("length").disabled=false;
+  $("lengthlabel").textContent=isPieces?"Length (inches)":"Length (inches, not used)";
+}
+$("unit").onchange=unitChanged;
+
+function currentKey(){
+  const t=$("thickness").value,g=$("grade").value,w=$("width").value;
+  const row=DATA.products.find(p=>p.thickness===t&&p.grade===g&&String(p.width==null?"":p.width)===w);
+  return row?row.key:null;
+}
+function basis(){ return document.querySelector('input[name="basis"]:checked').value; }
+
+let LINES=[];
+let EDITING=null;
+function buildLine(){
+  const key=currentKey();
+  if(!key){$("formmsg").textContent="That combination is not in the price list.";return null;}
+  const unit=$("unit").value;
+  const line={key,unit,qty:parseFloat($("qty").value),
+      length_in:parseFloat($("length").value),
+      custom_length:$("custom").checked,
+      extras:[...document.querySelectorAll(".ex:checked")].map(c=>c.value)};
+  if(!(line.qty>0)){$("formmsg").textContent="Enter a positive quantity.";return null;}
+  if(unit==="pieces"&&!(line.length_in>0)){$("formmsg").textContent="Enter a length (inches) for a per-piece quote.";return null;}
+  return line;
+}
+$("add").onclick=async()=>{
+  $("formmsg").textContent="";
+  const line=buildLine(); if(!line) return;
+  if(EDITING!=null){ LINES[EDITING]=line; endEdit(); }
+  else { LINES.push(line); }
+  await refresh();
+};
+function endEdit(){ EDITING=null; $("add").textContent="Add to quote →"; $("canceledit").style.display="none"; }
+$("canceledit").onclick=()=>{ endEdit(); $("formmsg").textContent=""; };
+window.editLine=i=>{
+  const line=LINES[i]; const p=DATA.products.find(x=>x.key===line.key);
+  if(p){ $("thickness").value=p.thickness; fillGrade(); $("grade").value=p.grade; fillWidth();
+         $("width").value=(p.width==null?"":p.width); }
+  $("qty").value=line.qty; $("unit").value=line.unit; unitChanged();
+  $("length").value=(line.length_in!=null?line.length_in:"");
+  $("custom").checked=!!line.custom_length;
+  document.querySelectorAll(".ex").forEach(c=>{ c.checked=(line.extras||[]).includes(c.value); });
+  EDITING=i; $("add").textContent="Update line "+(i+1); $("canceledit").style.display="";
+  $("formmsg").textContent=""; window.scrollTo({top:0,behavior:"smooth"});
+};
+window.setQty=async(i,v)=>{ const q=parseFloat(v); if(q>0){ LINES[i].qty=q; await refresh(); } };
+document.querySelectorAll('input[name="basis"]').forEach(r=>r.onchange=refresh);
+document.querySelectorAll('input[name="wunit"]').forEach(r=>r.onchange=()=>{
+  WEIGHT_UNIT=document.querySelector('input[name="wunit"]:checked').value;
+  $("whead").textContent="Weight ("+(WEIGHT_UNIT==="tons"?"tons":"lb")+")";
+  refresh();
+});
+
+async function refresh(){
+  const empty=!LINES.length;
+  $("qempty").style.display=empty?"":"none";
+  $("qactions").style.display=empty?"none":"";
+  if(empty){$("qbody").innerHTML="";$("grand").textContent="";$("orderwt").textContent="";return;}
+  const res=await (await fetch("/api/quote",{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({lines:LINES,adder_basis:basis(),use_inventory:$("useinv")&&$("useinv").checked,destination:$("dest").value})})).json();
+  $("qbody").innerHTML=res.lines.map((r,i)=>{
+    const L=LINES[i];
+    const qtyInput=L?'<input type="number" min="0" step="any" value="'+L.qty+'" onchange="setQty('+i+',this.value)" style="width:64px;padding:2px 4px"> '+(UNIT_LABEL[L.unit]||L.unit):"";
+    const x='<td class="no-print"><button class="ghost" onclick="editLine('+i+')">Edit</button> <button class="ghost" onclick="del('+i+')">✕</button></td>';
+    if(r.error) return '<tr><td>'+(r.key||"")+'</td><td colspan="4" class="msg err">'+r.error+"</td>"+x+"</tr>";
+    const iv=r.inventory;
+    const pos=(iv&&iv.position&&iv.position!=="unknown")?' <span class="pos '+iv.position+'">'+iv.position+"</span>":"";
+    const oh=(iv&&iv.sku_ohd_lbs!=null)?"On hand: "+wnum(iv.sku_ohd_lbs)+" "+wunit():"";
+    const av=(iv&&iv.sku_available_lbs!=null)?"Available: "+wnum(iv.sku_available_lbs)+" "+wunit():"";
+    const inc=(iv&&iv.sku_incoming_lbs!=null)?"Incoming: "+wnum(iv.sku_incoming_lbs)+" "+wunit():"";
+    const ac=(iv&&iv.avg_cost_cwt!=null)?"Avg cost: $"+iv.avg_cost_cwt.toFixed(2)+"/cwt":"";
+    const posinfo=(oh||av||inc||ac)?'<div class="sub2">'+[oh,av,inc,ac].filter(Boolean).join(" · ")+"</div>":"";
+    const item="<strong>"+r.description+pos+'</strong><div class="sub2">'+qtyInput+"</div>"+posinfo;
+    if(r.manual_quote) return "<tr><td>"+item+'</td><td class="num">'+wnum(r.weight_lb)+"</td>"+
+        '<td colspan="2"><span class="pill manual">Manual quote</span> <span class="bd">'+(r.note||"")+"</span></td>"+
+        '<td class="num">—</td>'+x+"</tr>";
+    const bd=r.breakdown.map(b=>b.label+": $"+b.cwt.toFixed(2)).join("<br>");
+    const wt='<div class="num">'+wnum(r.weight_lb)+'</div><div class="sub2">'+wbasis(r.weight_basis)+"</div>";
+    const sp=(r.spread_cwt!=null)?'<div class="sub2 '+(r.below_floor?"floorwarn":"")+'">CRU Spread $'+r.spread_cwt.toFixed(2)+" ("+r.spread_pct+"%)"+(r.below_floor?" ⚠ below floor":"")+"</div>":"";
+    return "<tr><td>"+item+'</td><td class="num">'+wt+"</td>"+
+        '<td class="bd">'+bd+'</td><td class="num">$'+r.rate_cwt.toFixed(2)+sp+"</td>"+
+        '<td class="num"><strong>'+money(r.line_total)+"</strong></td>"+x+"</tr>";
+  }).join("");
+  $("grand").textContent="Grand total: "+money(res.grand_total);
+  window.LAST_GRAND=res.grand_total||0;
+  $("orderwt").textContent = res.order_weight_lb ? ("combined order weight "+wnum(res.order_weight_lb)+" "+wunit()) : "";
+}
+function fmtQty(q){ return Number.isInteger(q)?q:q.toLocaleString(); }
+window.del=async i=>{LINES.splice(i,1);await refresh();};
+$("clear").onclick=async()=>{LINES=[];await refresh();};
+$("print").onclick=()=>{
+  const cust=$("customer").value.trim(), qn=$("quoteno").value.trim();
+  const today=new Date().toLocaleDateString();
+  const b=basis()==="order"?"per order (combined weight)":"per line";
+  const dest=$("dest").value;
+  $("printinfo").innerHTML=[cust?"Customer/Job: "+cust:"", qn?"Quote #: "+qn:"",
+       "Date: "+today, "Ship to: "+(dest||"Local"), "Adders: "+b].filter(Boolean).join(" &nbsp;•&nbsp; ");
+  window.print();
+};
+
+$("save").onclick=async()=>{
+  const r=await (await fetch("/api/admin/price",{method:"POST",headers:{"Content-Type":"application/json"},
+     body:JSON.stringify({key:$("akey").value.trim(),price_cwt:parseFloat($("aprice").value)})})).json();
+  const m=$("adminmsg");
+  if(r.error){m.className="msg err";m.textContent=r.error;}
+  else if(r.updated){m.className="msg ok";m.textContent="Updated. Reloading options...";await boot();}
+  else{m.className="msg err";m.textContent="No product with that key.";}
+};
+$("reimport").onclick=async()=>{
+  const m=$("adminmsg");m.className="msg";m.textContent="Importing...";
+  const r=await (await fetch("/api/reimport",{method:"POST"})).json();
+  if(r.error){m.className="msg err";m.textContent=r.error;}
+  else{m.className="msg ok";m.textContent="Imported "+r.imported.products+" products.";await boot();}
+};
+if($("useinv")) $("useinv").onchange=refresh;
+$("dest").onchange=refresh;
+if($("stance")) $("stance").onchange=async()=>{
+  await fetch("/api/set-profile",{method:"POST",headers:{"Content-Type":"application/json"},
+     body:JSON.stringify({profile:$("stance").value})});
+  await boot(); await refresh();
+};
+$("reimportinv").onclick=async()=>{
+  const m=$("invmsg");m.className="msg";m.textContent="Importing inventory...";
+  const r=await (await fetch("/api/reimport-inventory",{method:"POST"})).json();
+  if(r.error){m.className="msg err";m.textContent=r.error;}
+  else{m.className="msg ok";m.textContent="Imported "+r.imported.skus+" SKUs, "+r.imported.grades+" grades.";await boot();await refresh();}
+};
+$("saverule").onclick=async()=>{
+  const body={long_months:parseFloat($("r_long").value),short_months:parseFloat($("r_short").value),
+    adj_long_cwt:parseFloat($("r_adjlong").value),adj_short_cwt:parseFloat($("r_adjshort").value)};
+  const r=await (await fetch("/api/admin/inv-rule",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)})).json();
+  const m=$("invmsg");
+  if(r.error){m.className="msg err";m.textContent=r.error;}
+  else{m.className="msg ok";m.textContent="Rule saved.";await boot();await refresh();}
+};
+$("savespread").onclick=async()=>{
+  await fetch("/api/admin/cost-config",{method:"POST",headers:{"Content-Type":"application/json"},
+     body:JSON.stringify({min_spread_pct:parseFloat($("c_minspread").value),
+        hrc:parseFloat($("c_hrc").value),plate_narrow:parseFloat($("c_narrow").value),
+        plate_wide:parseFloat($("c_wide").value),plate_120:parseFloat($("c_120").value)})});
+  const m=$("costmsg");m.className="msg ok";m.textContent="Cost settings saved; material costs re-derived.";
+  await boot(); await refresh();
+};
+$("savecost").onclick=async()=>{
+  const r=await (await fetch("/api/admin/cost",{method:"POST",headers:{"Content-Type":"application/json"},
+     body:JSON.stringify({key:$("c_key").value.trim(),cost_cwt:parseFloat($("c_cost").value)})})).json();
+  const m=$("costmsg");
+  if(r.updated){m.className="msg ok";m.textContent="Cost saved for "+$("c_key").value.trim()+".";}
+  else{m.className="msg err";m.textContent="Save failed.";}
+  await refresh();
+};
+$("savequote").onclick=async()=>{
+  if(!LINES.length) return;
+  const body={customer:$("customer").value,quote_no:$("quoteno").value,grand_total:window.LAST_GRAND||0,
+     quote:{lines:LINES,adder_basis:basis(),use_inventory:$("useinv")&&$("useinv").checked,destination:$("dest").value}};
+  const r=await (await fetch("/api/quotes",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)})).json();
+  $("savemsg").textContent=r.id?("Saved #"+r.id):"Save failed";
+  setTimeout(()=>{$("savemsg").textContent="";},2500);
+  loadSaved();
+};
+async function loadSaved(){
+  const qs=((await (await fetch("/api/quotes")).json()).quotes)||[];
+  $("savedempty").style.display=qs.length?"none":"";
+  $("savedbody").innerHTML=qs.map(q=>"<tr><td>"+q.created_at.slice(0,10)+"</td><td>"+(q.customer||"—")+
+    "</td><td>"+(q.quote_no||"—")+"</td><td>"+(q.destination||"Local")+'</td><td class="num">'+q.lines+
+    '</td><td class="num">'+money(q.grand_total)+"</td>"+
+    '<td class="no-print"><button class="ghost" onclick="openQuote('+q.id+')">Load</button> '+
+    '<button class="ghost" onclick="removeQuote('+q.id+')">✕</button></td></tr>').join("");
+}
+window.openQuote=async id=>{
+  const q=await (await fetch("/api/quotes/"+id)).json();
+  if(q.error) return;
+  const p=q.payload||{};
+  $("customer").value=q.customer||""; $("quoteno").value=q.quote_no||"";
+  if($("dest")) $("dest").value=p.destination||"";
+  const rb=document.querySelector('input[name="basis"][value="'+(p.adder_basis||"line")+'"]'); if(rb) rb.checked=true;
+  if($("useinv")) $("useinv").checked=!!p.use_inventory;
+  LINES=(p.lines||[]).slice();
+  await refresh();
+  window.scrollTo({top:0,behavior:"smooth"});
+};
+window.removeQuote=async id=>{ await fetch("/api/quotes/"+id+"/delete",{method:"POST"}); loadSaved(); };
+boot();
+loadSaved();
+</script>
+</body>
+</html>

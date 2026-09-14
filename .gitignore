@@ -1,0 +1,23 @@
+# Generated database (rebuilt from the workbooks on import)
+pricing.db
+pricing_data.json
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Excel temp/lock files
+~$*
+
+# Proprietary data workbooks — pricing, cost, margin, and inventory data.
+# Excluded so they are NOT published to GitHub. Add your own copies locally.
+*.xlsx
+*.xlsm
+
+# Local editor / preview config (machine-specific paths)
+.claude/
+
+# Scratch / debug
+_*.py
+_*.txt
+_*.js
