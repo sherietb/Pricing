@@ -64,6 +64,12 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(500, {"error": "index.html missing"})
         elif self.path == "/api/quotes":
             self._send(200, {"quotes": db.list_quotes()})
+        elif self.path.startswith("/api/dashboard"):
+            days = 90
+            if "?" in self.path:
+                import urllib.parse
+                days = int(urllib.parse.parse_qs(self.path.split("?", 1)[1]).get("days", ["90"])[0])
+            self._send(200, db.dashboard(days))
         elif self.path.startswith("/api/quotes/"):
             qid = self.path.rsplit("/", 1)[-1]
             q = db.get_quote(int(qid)) if qid.isdigit() else None
@@ -122,6 +128,12 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(200, db.import_customers_csv())
             elif self.path == "/api/admin/pull-customers-db":
                 self._send(200, db.import_customers_from_db())
+            elif self.path == "/api/dash-config":
+                self._send(200, {"dash_config": db.set_dash_config(self._read_json())})
+            elif self.path.startswith("/api/quotes/") and self.path.endswith("/status"):
+                qid = self.path.split("/")[3]
+                st = self._read_json().get("status")
+                self._send(200, {"updated": db.set_quote_status(int(qid), st) if qid.isdigit() else 0})
             elif self.path == "/api/quotes":
                 pl = self._read_json()
                 qid = db.save_quote(pl.get("customer"), pl.get("quote_no"),

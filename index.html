@@ -163,10 +163,30 @@
   </div>
 
   <div class="card no-print">
+    <h2>Dashboard <span id="dashalert" class="pos short" style="display:none"></span></h2>
+    <div class="basis">
+      Bookings period:
+      <select id="dashdays" style="width:auto;padding:4px 8px">
+        <option value="30">30 days</option><option value="90" selected>90 days</option>
+        <option value="180">180 days</option><option value="365">1 year</option></select>
+      &nbsp;·&nbsp; Conversion alert if &gt; <input id="dashthresh" type="number" step="1" style="width:56px;padding:2px 4px">%
+      <button class="ghost" id="dashthreshsave">Set</button>
+    </div>
+    <div class="qmeta" id="dashtiles" style="margin-top:10px"></div>
+    <div class="grid" style="grid-template-columns:1fr 1fr;margin-top:6px">
+      <div><div class="sub2" style="font-weight:600;margin-bottom:4px">Monthly bookings ($)</div><table><tbody id="dashtrend"></tbody></table></div>
+      <div><div class="sub2" style="font-weight:600;margin-bottom:4px">Top customers (bookings $)</div><table><tbody id="dashtop"></tbody></table></div>
+    </div>
+    <div class="sub2" style="font-weight:600;margin:10px 0 4px">Quote conversion by region</div>
+    <table><thead><tr><th>Region</th><th class="num">Won</th><th class="num">Lost</th><th class="num">Open</th><th class="num">Rate</th></tr></thead><tbody id="dashregion"></tbody></table>
+    <div class="sub2" id="dashnote" style="margin-top:6px"></div>
+  </div>
+
+  <div class="card no-print">
     <h2>Saved quotes</h2>
     <table id="savedtable">
       <thead><tr><th>Date</th><th>Customer / job</th><th>Quote #</th><th>Region</th>
-        <th class="num">Lines</th><th class="num">Total</th><th></th></tr></thead>
+        <th class="num">Lines</th><th class="num">Total</th><th>Status</th><th></th></tr></thead>
       <tbody id="savedbody"></tbody>
     </table>
     <div class="muted" id="savedempty">No saved quotes yet.</div>
@@ -553,12 +573,41 @@ $("savequote").onclick=async()=>{
 async function loadSaved(){
   const qs=((await (await fetch("/api/quotes")).json()).quotes)||[];
   $("savedempty").style.display=qs.length?"none":"";
-  $("savedbody").innerHTML=qs.map(q=>"<tr><td>"+q.created_at.slice(0,10)+"</td><td>"+(q.customer||"—")+
+  $("savedbody").innerHTML=qs.map(q=>{
+    const st=q.status||"open";
+    const chip='<span class="pos '+(st==="won"?"long":st==="lost"?"short":"balanced")+'">'+st+"</span>";
+    return "<tr><td>"+q.created_at.slice(0,10)+"</td><td>"+(q.customer||"—")+
     "</td><td>"+(q.quote_no||"—")+"</td><td>"+(q.destination||"Local")+'</td><td class="num">'+q.lines+
-    '</td><td class="num">'+money(q.grand_total)+"</td>"+
-    '<td class="no-print"><button class="ghost" onclick="openQuote('+q.id+')">Load</button> '+
-    '<button class="ghost" onclick="removeQuote('+q.id+')">✕</button></td></tr>').join("");
+    '</td><td class="num">'+money(q.grand_total)+"</td><td>"+chip+"</td>"+
+    '<td class="no-print"><button class="ghost" onclick="setStatus('+q.id+',\'won\')">Won</button> '+
+    '<button class="ghost" onclick="setStatus('+q.id+',\'lost\')">Lost</button> '+
+    '<button class="ghost" onclick="openQuote('+q.id+')">Load</button> '+
+    '<button class="ghost" onclick="removeQuote('+q.id+')">✕</button></td></tr>';}).join("");
 }
+window.setStatus=async(id,st)=>{
+  await fetch("/api/quotes/"+id+"/status",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({status:st})});
+  await loadSaved(); await loadDashboard();
+};
+function tile(label,val){return '<div><label>'+label+'</label><div style="font-size:18px;font-weight:700">'+val+'</div></div>';}
+async function loadDashboard(){
+  const days=$("dashdays")?$("dashdays").value:90;
+  let d; try{ d=await (await fetch("/api/dashboard?days="+days)).json(); }catch(e){ return; }
+  const c=d.conversion||{}, b=d.bookings;
+  $("dashtiles").innerHTML=(b?tile("Bookings ("+b.days+"d)",money(b.total_val))+tile("Weight",Math.round(b.total_wgt).toLocaleString()+" lb")+tile("Shipments",b.shipments.toLocaleString()):"")
+    +tile("Conversion",c.rate==null?"— (mark won/lost)":c.rate+"%");
+  $("dashtrend").innerHTML=((b&&b.trend)||[]).map(t=>"<tr><td>"+t.month+'</td><td class="num">'+money(t.val)+"</td></tr>").join("")||'<tr><td class="sub2">—</td></tr>';
+  $("dashtop").innerHTML=((b&&b.top_customers)||[]).map(t=>"<tr><td>"+t.name+'</td><td class="num">'+money(t.val)+"</td></tr>").join("")||'<tr><td class="sub2">—</td></tr>';
+  $("dashregion").innerHTML=(c.by_region||[]).map(r=>"<tr><td>"+(r.region||"(none)")+'</td><td class="num">'+r.won+'</td><td class="num">'+r.lost+'</td><td class="num">'+r.open+'</td><td class="num">'+(r.rate==null?"—":r.rate+"%")+"</td></tr>").join("")||'<tr><td class="sub2">no quotes yet</td></tr>';
+  const al=$("dashalert");
+  if(d.alert){al.style.display="";al.textContent="⚠ Conversion "+c.rate+"% > "+d.alert_pct+"%";} else al.style.display="none";
+  if($("dashthresh")&&document.activeElement!==$("dashthresh")) $("dashthresh").value=d.alert_pct;
+  $("dashnote").textContent=b?"":("Bookings unavailable"+(d.bookings_error?": "+d.bookings_error:" (DB not reachable)"));
+}
+if($("dashdays")) $("dashdays").onchange=loadDashboard;
+$("dashthreshsave").onclick=async()=>{
+  await fetch("/api/dash-config",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({conv_alert_pct:parseFloat($("dashthresh").value)})});
+  await loadDashboard();
+};
 window.openQuote=async id=>{
   const q=await (await fetch("/api/quotes/"+id)).json();
   if(q.error) return;
@@ -576,6 +625,7 @@ window.openQuote=async id=>{
 window.removeQuote=async id=>{ await fetch("/api/quotes/"+id+"/delete",{method:"POST"}); loadSaved(); };
 boot();
 loadSaved();
+loadDashboard();
 </script>
 </body>
 </html>

@@ -267,10 +267,12 @@ def save_quote(customer, quote_no, quote, grand_total):
 
 
 def list_quotes(limit=50):
+    _ensure_quote_status()
     conn = connect()
     conn.executescript(SCHEMA)
     out = []
-    for r in conn.execute("SELECT id, created_at, customer, quote_no, destination, grand_total, payload "
+    for r in conn.execute("SELECT id, created_at, customer, quote_no, destination, grand_total, "
+                          "COALESCE(status,'open') status, payload "
                           "FROM quotes ORDER BY id DESC LIMIT ?", (limit,)):
         d = dict(r)
         try:
@@ -391,6 +393,119 @@ def customer_adjustments(name):
 CUST_DB_CONN = os.environ.get(
     "PRICING_CUST_DB_CONN",
     "DRIVER={SQL Server};SERVER=10.0.1.50;DATABASE=Planning;Trusted_Connection=yes")
+BOOKINGS_DB_CONN = os.environ.get(
+    "PRICING_BOOKINGS_DB_CONN",
+    "DRIVER={SQL Server};SERVER=10.0.1.50;DATABASE=Inventory_Planning;Trusted_Connection=yes")
+DASH_DEFAULT = {"conv_alert_pct": 60.0}
+
+
+def _ensure_quote_status():
+    conn = connect()
+    conn.executescript(SCHEMA)
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(quotes)")}
+    if "status" not in cols:
+        conn.execute("ALTER TABLE quotes ADD COLUMN status TEXT DEFAULT 'open'")
+    conn.execute("CREATE TABLE IF NOT EXISTS dash_config (k TEXT PRIMARY KEY, v REAL)")
+    conn.commit()
+    conn.close()
+
+
+def set_quote_status(qid, status):
+    _ensure_quote_status()
+    status = status if status in ("open", "won", "lost") else "open"
+    conn = connect()
+    n = conn.execute("UPDATE quotes SET status=? WHERE id=?", (status, qid)).rowcount
+    conn.commit()
+    conn.close()
+    return n
+
+
+def get_dash_config():
+    _ensure_quote_status()
+    conn = connect()
+    cfg = {r["k"]: r["v"] for r in conn.execute("SELECT k, v FROM dash_config")}
+    conn.close()
+    return {**DASH_DEFAULT, **cfg}
+
+
+def set_dash_config(updates):
+    _ensure_quote_status()
+    conn = connect()
+    for k in DASH_DEFAULT:
+        if k in updates and updates[k] is not None:
+            conn.execute("INSERT OR REPLACE INTO dash_config VALUES (?,?)", (k, float(updates[k])))
+    conn.commit()
+    conn.close()
+    return get_dash_config()
+
+
+def _quote_conversion():
+    """Conversion from the app's own saved quotes (needs reps marking won/lost)."""
+    _ensure_quote_status()
+    conn = connect()
+    rows = [dict(r) for r in conn.execute(
+        "SELECT COALESCE(status,'open') status, COALESCE(destination,'(none)') region, COUNT(*) n, SUM(grand_total) val "
+        "FROM quotes GROUP BY COALESCE(status,'open'), COALESCE(destination,'(none)')")]
+    conn.close()
+    tot = {"won": 0, "lost": 0, "open": 0}
+    by_region = {}
+    for r in rows:
+        tot[r["status"]] = tot.get(r["status"], 0) + r["n"]
+        reg = by_region.setdefault(r["region"], {"won": 0, "lost": 0, "open": 0})
+        reg[r["status"]] += r["n"]
+    def rate(w, l):
+        return round(100.0 * w / (w + l), 1) if (w + l) else None
+    regions = [{"region": k, "won": v["won"], "lost": v["lost"], "open": v["open"], "rate": rate(v["won"], v["lost"])}
+               for k, v in sorted(by_region.items())]
+    return {"won": tot["won"], "lost": tot["lost"], "open": tot["open"],
+            "rate": rate(tot["won"], tot["lost"]), "by_region": regions}
+
+
+def _bookings(days=90):
+    """Bookings from the ERP sales history (sahstn_rec), names via transports.customerno."""
+    import pyodbc
+    cn = pyodbc.connect(BOOKINGS_DB_CONN, timeout=30)
+    cur = cn.cursor()
+    cur.execute("SELECT SUM(stn_tot_val), SUM(stn_blg_wgt), COUNT(*) FROM dbo.sahstn_rec "
+                "WHERE stn_shp_dt >= DATEADD(day, ?, GETDATE())", -abs(days))
+    val, wgt, cnt = cur.fetchone()
+    cur.execute("SELECT FORMAT(stn_shp_dt,'yyyy-MM') ym, SUM(stn_tot_val), SUM(stn_blg_wgt) "
+                "FROM dbo.sahstn_rec WHERE stn_shp_dt >= DATEADD(month,-6,GETDATE()) "
+                "GROUP BY FORMAT(stn_shp_dt,'yyyy-MM') ORDER BY ym")
+    trend = [{"month": r[0], "val": float(r[1] or 0), "wgt": float(r[2] or 0)} for r in cur.fetchall()]
+    cur.execute("SELECT TOP 10 LTRIM(RTRIM(stn_sld_cus_id)) cid, SUM(stn_tot_val) val, SUM(stn_blg_wgt) wgt "
+                "FROM dbo.sahstn_rec WHERE stn_shp_dt >= DATEADD(day, ?, GETDATE()) "
+                "GROUP BY LTRIM(RTRIM(stn_sld_cus_id)) ORDER BY SUM(stn_tot_val) DESC", -abs(days))
+    top = [{"cid": r[0], "val": float(r[1] or 0), "wgt": float(r[2] or 0)} for r in cur.fetchall()]
+    cn.close()
+    # names from Planning.transports (customerno -> customer_name)
+    names = {}
+    try:
+        cn2 = pyodbc.connect(CUST_DB_CONN, timeout=15); cur2 = cn2.cursor()
+        cur2.execute("SELECT LTRIM(RTRIM(customerno)) cid, MAX(customer_name) FROM dbo.transports "
+                     "WHERE customerno IS NOT NULL GROUP BY LTRIM(RTRIM(customerno))")
+        names = {r[0]: r[1] for r in cur2.fetchall()}
+        cn2.close()
+    except Exception:
+        pass
+    for t in top:
+        t["name"] = names.get(t["cid"], t["cid"])
+    return {"days": days, "total_val": float(val or 0), "total_wgt": float(wgt or 0),
+            "shipments": int(cnt or 0), "trend": trend, "top_customers": top}
+
+
+def dashboard(days=90):
+    cfg = get_dash_config()
+    conv = _quote_conversion()
+    out = {"conversion": conv, "alert_pct": cfg["conv_alert_pct"],
+           "alert": (conv["rate"] is not None and conv["rate"] > cfg["conv_alert_pct"])}
+    try:
+        out["bookings"] = _bookings(days)
+    except Exception as exc:
+        out["bookings"] = None
+        out["bookings_error"] = str(exc)[:200]
+    return out
+
 
 
 def customers_db_available():
