@@ -125,12 +125,18 @@
       <label><input type="radio" name="wunit" value="tons"> Tons</label>
     </div>
     <div class="basis no-print">
-      Ship to: <select id="dest" style="width:auto;padding:4px 8px"></select>
+      Region: <select id="dest" style="width:auto;padding:4px 8px"></select>
+      <label style="gap:6px">Apply:
+        <select id="regionmode" style="width:auto;padding:4px 8px">
+          <option value="both">Freight + Competitive</option>
+          <option value="freight">Freight only</option>
+          <option value="comp">Competitive only</option>
+        </select>
+      </label>
       <span id="destnote" class="sub2"></span>
     </div>
     <div class="basis no-print" id="invrow" style="display:none">
       <label><input type="checkbox" id="useinv"> Adjust price for inventory position</label>
-      <label style="gap:6px">Stance: <select id="stance" style="width:auto;padding:4px 8px"></select></label>
       <span id="invnote" class="sub2"></span>
     </div>
     <table id="qtable">
@@ -155,7 +161,7 @@
   <div class="card no-print">
     <h2>Saved quotes</h2>
     <table id="savedtable">
-      <thead><tr><th>Date</th><th>Customer / job</th><th>Quote #</th><th>Ship to</th>
+      <thead><tr><th>Date</th><th>Customer / job</th><th>Quote #</th><th>Region</th>
         <th class="num">Lines</th><th class="num">Total</th><th></th></tr></thead>
       <tbody id="savedbody"></tbody>
     </table>
@@ -180,13 +186,21 @@
       </div>
       <div class="msg" id="adminmsg"></div>
       <hr style="border:none;border-top:1px solid var(--line);margin:16px 0">
-      <div style="font-weight:600;color:var(--muted);margin-bottom:8px">Inventory position rule</div>
+      <div style="font-weight:600;color:var(--muted);margin-bottom:8px">Inventory position ranking — separate for CTL &amp; discrete plate (months-on-hand)</div>
+      <div style="font-size:12px;color:var(--muted);margin-bottom:6px">CTL (cut-to-length coil)</div>
       <div class="grid">
-        <div><label>Long if &ge; (months)</label><input id="r_long" type="number" step="0.5"></div>
-        <div><label>Short if &le; (months)</label><input id="r_short" type="number" step="0.5"></div>
-        <div><label>Long adder ($/cwt)</label><input id="r_adjlong" type="number" step="0.25"></div>
-        <div><label>Short adder ($/cwt)</label><input id="r_adjshort" type="number" step="0.25"></div>
-        <div style="align-self:end"><button class="ghost" id="saverule">Save rule</button></div>
+        <div><label>Premium if &lt; (mo)</label><input id="ctl_short" type="number" step="0.1"></div>
+        <div><label>Discount if &gt; (mo)</label><input id="ctl_long" type="number" step="0.1"></div>
+        <div><label>Premium $/cwt</label><input id="ctl_adjshort" type="number" step="0.25"></div>
+        <div><label>Discount $/cwt</label><input id="ctl_adjlong" type="number" step="0.25"></div>
+      </div>
+      <div style="font-size:12px;color:var(--muted);margin:8px 0 6px">Discrete plate</div>
+      <div class="grid">
+        <div><label>Premium if &lt; (mo)</label><input id="plate_short" type="number" step="0.1"></div>
+        <div><label>Discount if &gt; (mo)</label><input id="plate_long" type="number" step="0.1"></div>
+        <div><label>Premium $/cwt</label><input id="plate_adjshort" type="number" step="0.25"></div>
+        <div><label>Discount $/cwt</label><input id="plate_adjlong" type="number" step="0.25"></div>
+        <div style="align-self:end"><button class="ghost" id="saverule">Save inventory rules</button></div>
         <div style="align-self:end"><button class="ghost" id="reimportinv">Re-import inventory</button></div>
       </div>
       <div class="msg" id="invmsg"></div>
@@ -236,23 +250,24 @@ async function boot(){
   $("extras").innerHTML = DATA.extras.map(e=>
      '<label><input type="checkbox" class="ex" value="'+e.name+'"> '+e.name+" (+$"+e.adder_cwt.toFixed(2)+")</label>").join("");
   const prevDest=$("dest").value;
-  $("dest").innerHTML='<option value="">Local (no freight)</option>'+
-     (DATA.freight||[]).map(f=>'<option value="'+f.destination+'">'+f.destination+" (+$"+f.cwt.toFixed(2)+"/cwt)</option>").join("");
+  $("dest").innerHTML='<option value="">Local / pickup (none)</option>'+
+     (DATA.freight||[]).map(f=>'<option value="'+f.destination+'">'+f.destination+" (frt $"+f.freight_cwt.toFixed(2)+(f.comp_cwt?", comp $"+f.comp_cwt.toFixed(2):"")+")</option>").join("");
   if(prevDest) $("dest").value=prevDest;
-  const rule=DATA.inv_rule||{};
+  const rules=DATA.inv_rules||{ctl:{},plate:{}}, c=rules.ctl||{}, p=rules.plate||{};
   $("invrow").style.display=DATA.inventory_loaded?"":"none";
   if(DATA.inventory_loaded){
-    const profs=Object.keys(DATA.inv_profiles||{}).concat(["Custom"]);
-    $("stance").innerHTML=profs.map(p=>"<option"+(p===DATA.inv_active_profile?" selected":"")+">"+p+"</option>").join("");
     const im=DATA.inventory_meta||{};
     let age="";
     if(im.as_of){age=" · as of "+im.as_of.slice(0,10)+(im.days_old!=null?" ("+im.days_old+"d old)":"");}
     const staleChip=im.stale?' <span class="pos short">STALE &gt;'+im.stale_days+"d</span>":"";
-    $("invnote").innerHTML="long ≥"+rule.long_months+"mo → $"+rule.adj_long_cwt.toFixed(2)
-      +"/cwt, short ≤"+rule.short_months+"mo → +$"+rule.adj_short_cwt.toFixed(2)+age+staleChip;
+    const f=x=>Number(x).toFixed(2);
+    $("invnote").innerHTML="CTL: &lt;"+c.short_months+"mo +$"+f(c.adj_short_cwt)+" / &gt;"+c.long_months+"mo $"+f(c.adj_long_cwt)
+      +" &nbsp;|&nbsp; Plate: &lt;"+p.short_months+"mo +$"+f(p.adj_short_cwt)+" / &gt;"+p.long_months+"mo $"+f(p.adj_long_cwt)+age+staleChip;
   }
-  if($("r_long")){$("r_long").value=rule.long_months;$("r_short").value=rule.short_months;
-    $("r_adjlong").value=rule.adj_long_cwt;$("r_adjshort").value=rule.adj_short_cwt;}
+  if($("ctl_short")){
+    $("ctl_short").value=c.short_months;$("ctl_long").value=c.long_months;$("ctl_adjshort").value=c.adj_short_cwt;$("ctl_adjlong").value=c.adj_long_cwt;
+    $("plate_short").value=p.short_months;$("plate_long").value=p.long_months;$("plate_adjshort").value=p.adj_short_cwt;$("plate_adjlong").value=p.adj_long_cwt;
+  }
   if($("c_minspread")&&DATA.cost_config){const cc=DATA.cost_config;
     $("c_minspread").value=cc.min_spread_pct;$("c_hrc").value=cc.hrc;
     $("c_narrow").value=cc.plate_narrow;$("c_wide").value=cc.plate_wide;$("c_120").value=cc.plate_120;}
@@ -349,7 +364,7 @@ async function refresh(){
   $("qactions").style.display=empty?"none":"";
   if(empty){$("qbody").innerHTML="";$("grand").textContent="";$("orderwt").textContent="";return;}
   const res=await (await fetch("/api/quote",{method:"POST",headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({lines:LINES,adder_basis:basis(),use_inventory:$("useinv")&&$("useinv").checked,destination:$("dest").value})})).json();
+      body:JSON.stringify({lines:LINES,adder_basis:basis(),use_inventory:$("useinv")&&$("useinv").checked,destination:$("dest").value,region_mode:$("regionmode").value})})).json();
   $("qbody").innerHTML=res.lines.map((r,i)=>{
     const L=LINES[i];
     const qtyInput=L?'<input type="number" min="0" step="any" value="'+L.qty+'" onchange="setQty('+i+',this.value)" style="width:64px;padding:2px 4px"> '+(UNIT_LABEL[L.unit]||L.unit):"";
@@ -386,7 +401,7 @@ $("print").onclick=()=>{
   const b=basis()==="order"?"per order (combined weight)":"per line";
   const dest=$("dest").value;
   $("printinfo").innerHTML=[cust?"Customer/Job: "+cust:"", qn?"Quote #: "+qn:"",
-       "Date: "+today, "Ship to: "+(dest||"Local"), "Adders: "+b].filter(Boolean).join(" &nbsp;•&nbsp; ");
+       "Date: "+today, "Region: "+(dest||"Local/pickup")+" ("+$("regionmode").value+")", "Adders: "+b].filter(Boolean).join(" &nbsp;•&nbsp; ");
   window.print();
 };
 
@@ -406,11 +421,7 @@ $("reimport").onclick=async()=>{
 };
 if($("useinv")) $("useinv").onchange=refresh;
 $("dest").onchange=refresh;
-if($("stance")) $("stance").onchange=async()=>{
-  await fetch("/api/set-profile",{method:"POST",headers:{"Content-Type":"application/json"},
-     body:JSON.stringify({profile:$("stance").value})});
-  await boot(); await refresh();
-};
+$("regionmode").onchange=refresh;
 $("reimportinv").onclick=async()=>{
   const m=$("invmsg");m.className="msg";m.textContent="Importing inventory...";
   const r=await (await fetch("/api/reimport-inventory",{method:"POST"})).json();
@@ -418,12 +429,14 @@ $("reimportinv").onclick=async()=>{
   else{m.className="msg ok";m.textContent="Imported "+r.imported.skus+" SKUs, "+r.imported.grades+" grades.";await boot();await refresh();}
 };
 $("saverule").onclick=async()=>{
-  const body={long_months:parseFloat($("r_long").value),short_months:parseFloat($("r_short").value),
-    adj_long_cwt:parseFloat($("r_adjlong").value),adj_short_cwt:parseFloat($("r_adjshort").value)};
-  const r=await (await fetch("/api/admin/inv-rule",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)})).json();
-  const m=$("invmsg");
-  if(r.error){m.className="msg err";m.textContent=r.error;}
-  else{m.className="msg ok";m.textContent="Rule saved.";await boot();await refresh();}
+  const send=(pt,b)=>fetch("/api/admin/inv-rule",{method:"POST",headers:{"Content-Type":"application/json"},
+     body:JSON.stringify(Object.assign({product_type:pt},b))});
+  await send("ctl",{short_months:parseFloat($("ctl_short").value),long_months:parseFloat($("ctl_long").value),
+    adj_short_cwt:parseFloat($("ctl_adjshort").value),adj_long_cwt:parseFloat($("ctl_adjlong").value)});
+  await send("plate",{short_months:parseFloat($("plate_short").value),long_months:parseFloat($("plate_long").value),
+    adj_short_cwt:parseFloat($("plate_adjshort").value),adj_long_cwt:parseFloat($("plate_adjlong").value)});
+  const m=$("invmsg");m.className="msg ok";m.textContent="Inventory rules saved (CTL + plate).";
+  await boot(); await refresh();
 };
 $("savespread").onclick=async()=>{
   await fetch("/api/admin/cost-config",{method:"POST",headers:{"Content-Type":"application/json"},
@@ -444,7 +457,7 @@ $("savecost").onclick=async()=>{
 $("savequote").onclick=async()=>{
   if(!LINES.length) return;
   const body={customer:$("customer").value,quote_no:$("quoteno").value,grand_total:window.LAST_GRAND||0,
-     quote:{lines:LINES,adder_basis:basis(),use_inventory:$("useinv")&&$("useinv").checked,destination:$("dest").value}};
+     quote:{lines:LINES,adder_basis:basis(),use_inventory:$("useinv")&&$("useinv").checked,destination:$("dest").value,region_mode:$("regionmode").value}};
   const r=await (await fetch("/api/quotes",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)})).json();
   $("savemsg").textContent=r.id?("Saved #"+r.id):"Save failed";
   setTimeout(()=>{$("savemsg").textContent="";},2500);
@@ -465,6 +478,7 @@ window.openQuote=async id=>{
   const p=q.payload||{};
   $("customer").value=q.customer||""; $("quoteno").value=q.quote_no||"";
   if($("dest")) $("dest").value=p.destination||"";
+  if($("regionmode")) $("regionmode").value=p.region_mode||"both";
   const rb=document.querySelector('input[name="basis"][value="'+(p.adder_basis||"line")+'"]'); if(rb) rb.checked=true;
   if($("useinv")) $("useinv").checked=!!p.use_inventory;
   LINES=(p.lines||[]).slice();

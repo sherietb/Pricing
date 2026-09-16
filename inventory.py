@@ -22,15 +22,12 @@ DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "pricing.db")
 DEFAULT_WORKBOOK = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                                 "Inventory Coil Projections V1.xlsx")
 
-# Named stances the rep/admin can switch between at any time. Short side is left on
-# standby (nothing is that tight on projected basis today; it protects margin later).
-PROFILES = {
-    "Conservative": {"long_months": 6.0, "short_months": 1.5, "adj_long_cwt": -1.5, "adj_short_cwt": 1.5},
-    "Moderate":     {"long_months": 5.0, "short_months": 2.0, "adj_long_cwt": -2.5, "adj_short_cwt": 2.5},
-    "Aggressive":   {"long_months": 4.5, "short_months": 2.0, "adj_long_cwt": -4.0, "adj_short_cwt": 4.0},
-}
-DEFAULT_PROFILE = "Moderate"
-DEFAULT_RULE = dict(PROFILES[DEFAULT_PROFILE])
+# Inventory-position ranking, kept SEPARATELY for CTL (cut-to-length coil) and discrete
+# PLATE so each can be tuned on its own. Rule per type: months-on-hand < short_months ->
+# premium (+adj_short); > long_months -> discount (adj_long); in between -> baseline.
+PRODUCT_TYPES = ("ctl", "plate")
+RULE_KEYS = ("short_months", "long_months", "adj_short_cwt", "adj_long_cwt")
+DEFAULT_RULE = {"short_months": 1.0, "long_months": 2.0, "adj_short_cwt": 2.0, "adj_long_cwt": -2.0}
 
 # Inventory data older than this many days shows a "stale" warning to reps.
 STALE_DAYS = 2
@@ -39,7 +36,7 @@ SCHEMA = """
 CREATE TABLE IF NOT EXISTS inventory_sku (
     key TEXT PRIMARY KEY, grade TEXT, size TEXT, width TEXT,
     ohd_lbs REAL, reserved_lbs REAL, available_lbs REAL, incoming_lbs REAL, po_lbs REAL,
-    avg_cost_cwt REAL
+    avg_cost_cwt REAL, product_type TEXT
 );
 CREATE TABLE IF NOT EXISTS inventory_grade (
     grade TEXT PRIMARY KEY, ohd_lbs REAL, avail_lbs REAL, po_lbs REAL,
@@ -110,64 +107,35 @@ def init_rule():
     conn = connect()
     conn.executescript(SCHEMA)
     have = {r["k"] for r in conn.execute("SELECT k FROM inv_rule")}
-    for k, v in DEFAULT_RULE.items():
-        if k not in have:
-            conn.execute("INSERT INTO inv_rule VALUES (?,?)", (k, v))
-    if conn.execute("SELECT v FROM meta WHERE k='inv_profile'").fetchone() is None:
-        conn.execute("INSERT OR REPLACE INTO meta VALUES ('inv_profile', ?)", (DEFAULT_PROFILE,))
+    for t in PRODUCT_TYPES:
+        for k, v in DEFAULT_RULE.items():
+            kk = t + "_" + k
+            if kk not in have:
+                conn.execute("INSERT INTO inv_rule VALUES (?,?)", (kk, v))
     conn.commit()
     conn.close()
 
 
-def get_rule():
+def get_rules():
+    """Both rule sets: {'ctl': {...}, 'plate': {...}}."""
     init_rule()
     conn = connect()
-    rule = {r["k"]: r["v"] for r in conn.execute("SELECT k, v FROM inv_rule")}
+    stored = {r["k"]: r["v"] for r in conn.execute("SELECT k, v FROM inv_rule")}
     conn.close()
-    return {**DEFAULT_RULE, **rule}
+    return {t: {k: stored.get(t + "_" + k, DEFAULT_RULE[k]) for k in RULE_KEYS} for t in PRODUCT_TYPES}
 
 
-def set_rule(updates):
+def set_rule(product_type, updates):
+    """Update one product type's rule (product_type in PRODUCT_TYPES)."""
     init_rule()
+    t = product_type if product_type in PRODUCT_TYPES else "ctl"
     conn = connect()
-    for k in DEFAULT_RULE:
+    for k in RULE_KEYS:
         if k in updates and updates[k] is not None:
-            conn.execute("INSERT OR REPLACE INTO inv_rule VALUES (?,?)", (k, float(updates[k])))
-    conn.execute("INSERT OR REPLACE INTO meta VALUES ('inv_profile', 'Custom')")  # manual edit = custom stance
+            conn.execute("INSERT OR REPLACE INTO inv_rule VALUES (?,?)", (t + "_" + k, float(updates[k])))
     conn.commit()
     conn.close()
-    return get_rule()
-
-
-def get_profiles():
-    return {name: dict(vals) for name, vals in PROFILES.items()}
-
-
-def get_active_profile():
-    init_rule()
-    conn = connect()
-    row = conn.execute("SELECT v FROM meta WHERE k='inv_profile'").fetchone()
-    conn.close()
-    return row["v"] if row else DEFAULT_PROFILE
-
-
-def set_profile(name):
-    """Switch the active stance. Presets set their numbers; 'Custom' keeps current numbers."""
-    init_rule()
-    if name in PROFILES:
-        set_rule(PROFILES[name])   # writes numbers (and flips profile to Custom)...
-        conn = connect()
-        conn.execute("INSERT OR REPLACE INTO meta VALUES ('inv_profile', ?)", (name,))  # ...restore preset name
-        conn.commit()
-        conn.close()
-    elif name == "Custom":
-        conn = connect()
-        conn.execute("INSERT OR REPLACE INTO meta VALUES ('inv_profile', 'Custom')")
-        conn.commit()
-        conn.close()
-    else:
-        raise ValueError("unknown profile: " + str(name))
-    return {"profile": get_active_profile(), "rule": get_rule()}
+    return get_rules()
 
 
 def import_inventory(path=DEFAULT_WORKBOOK):
@@ -185,14 +153,21 @@ def import_inventory(path=DEFAULT_WORKBOOK):
         width = str(int(w)) if isinstance(w, (int, float)) else str(w).strip()
         g = _norm_grade(grade)   # 786-14G / 786-316 / 101150 -> 786 / 1011-50 (match price-list grade)
         key = "-".join(p for p in (str(size).strip(), width, g) if p)
-        d = det.setdefault(key, {"grade": g, "size": str(size).strip(),
-                                 "width": width, "ohd": 0.0, "res": 0.0, "inc": 0.0, "po": 0.0, "cst_lbs": 0.0})
+        d = det.setdefault(key, {"grade": g, "size": str(size).strip(), "width": width,
+                                 "ohd": 0.0, "res": 0.0, "inc": 0.0, "po": 0.0, "cst_lbs": 0.0,
+                                 "cc": 0.0, "fpco": 0.0})
         d["ohd"] += _num(row[9]); d["res"] += _num(row[11])
         d["inc"] += _num(row[13]); d["po"] += _num(row[14])
         d["cst_lbs"] += _num(row[10]) * _num(row[9])   # ohd_cst($/cwt) x ohd_lbs -> lbs-weighted avg
+        fw = _num(row[9]) + _num(row[14])              # ohd + PO lbs, for CTL/plate form dominance
+        if str(row[0] or "").strip().upper() == "FPCO":
+            d["fpco"] += fw                            # FPCO = discrete plate
+        else:
+            d["cc"] += fw                              # CC (or unknown) = CTL / cut coil
     sku_rows = [(k, d["grade"], d["size"], d["width"], d["ohd"], d["res"],
                  d["ohd"] - d["res"], d["inc"], d["po"],
-                 round(d["cst_lbs"] / d["ohd"], 2) if d["ohd"] > 0 else None) for k, d in det.items()]
+                 round(d["cst_lbs"] / d["ohd"], 2) if d["ohd"] > 0 else None,
+                 "plate" if d["fpco"] > d["cc"] else "ctl") for k, d in det.items()]
 
     grade_acc = {}        # grade subtotal rows (collapsed pivot)
     leaf_grade_acc = {}   # grades aggregated from per-SKU leaf rows (expanded pivot)
@@ -234,7 +209,7 @@ def import_inventory(path=DEFAULT_WORKBOOK):
     conn.execute("DELETE FROM inventory_sku")
     conn.execute("DELETE FROM inventory_grade")
     conn.execute("DELETE FROM inventory_sku_moh")
-    conn.executemany("INSERT OR REPLACE INTO inventory_sku VALUES (?,?,?,?,?,?,?,?,?,?)", sku_rows)
+    conn.executemany("INSERT OR REPLACE INTO inventory_sku VALUES (?,?,?,?,?,?,?,?,?,?,?)", sku_rows)
     conn.executemany("INSERT OR REPLACE INTO inventory_grade VALUES (?,?,?,?,?,?,?,?)", grade_rows)
     conn.executemany("INSERT OR REPLACE INTO inventory_sku_moh VALUES (?,?,?,?,?,?,?,?)", sku_moh_rows)
     conn.execute("INSERT OR REPLACE INTO meta VALUES ('last_inventory_import', ?)",
@@ -279,13 +254,13 @@ def projected_months(gr):
     return round((gr["ohd_lbs"] + gr["po_lbs"]) / cons, 2)
 
 
-def classify(mos, rule=None):
-    rule = rule or get_rule()
+def classify(mos, rule):
+    """rule = one product type's dict. <short -> premium, >long -> discount, else baseline."""
     if mos is None:
         return "unknown", 0.0
-    if mos >= rule["long_months"]:
+    if mos > rule["long_months"]:
         return "long", rule["adj_long_cwt"]
-    if mos <= rule["short_months"]:
+    if mos < rule["short_months"]:
         return "short", rule["adj_short_cwt"]
     return "balanced", 0.0
 
@@ -319,8 +294,8 @@ def get_meta():
             "as_of": as_of, "days_old": days_old, "stale": stale, "stale_days": STALE_DAYS}
 
 
-def get_inventory_for(key, grade, rule=None):
-    rule = rule or get_rule()
+def get_inventory_for(key, grade, rules=None):
+    rules = rules or get_rules()
     conn = connect()
     try:
         sku = conn.execute("SELECT * FROM inventory_sku WHERE key=?", (key,)).fetchone()
@@ -331,8 +306,10 @@ def get_inventory_for(key, grade, rule=None):
     conn.close()
     if not sku and not gr and not smoh:
         return None
+    ptype = (sku["product_type"] if sku and sku["product_type"] else "ctl")   # CTL vs discrete plate
+    rule = rules.get(ptype, rules["ctl"])
     # Prefer the MOH sheet's on-hand/available (what the CCO reads); fall back to Details.
-    out = {"grade": grade,
+    out = {"grade": grade, "product_type": ptype,
            "sku_ohd_lbs": round(smoh["ohd_lbs"]) if smoh else (round(sku["ohd_lbs"]) if sku else None),
            "sku_available_lbs": round(smoh["avail_lbs"]) if smoh else (round(sku["available_lbs"]) if sku else None),
            "avg_cost_cwt": (sku["avg_cost_cwt"] if sku and sku["avg_cost_cwt"] else None),
@@ -361,4 +338,4 @@ def get_inventory_for(key, grade, rule=None):
 
 if __name__ == "__main__":
     print("Imported:", import_inventory())
-    print("Rule:", get_rule())
+    print("Rules:", get_rules())

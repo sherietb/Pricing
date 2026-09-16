@@ -75,9 +75,7 @@ class Handler(BaseHTTPRequestHandler):
                 pass
             data = db.bootstrap()
             data["inventory_loaded"] = inventory.has_data()
-            data["inv_rule"] = inventory.get_rule()
-            data["inv_profiles"] = inventory.get_profiles()
-            data["inv_active_profile"] = inventory.get_active_profile()
+            data["inv_rules"] = inventory.get_rules()   # {'ctl': {...}, 'plate': {...}}
             data["inventory_meta"] = inventory.get_meta()
             data["cost_config"] = costing.get_config()
             self._send(200, data)
@@ -106,9 +104,8 @@ class Handler(BaseHTTPRequestHandler):
             elif self.path == "/api/reimport-inventory":
                 self._send(200, {"imported": inventory.import_inventory()})
             elif self.path == "/api/admin/inv-rule":
-                self._send(200, {"rule": inventory.set_rule(self._read_json())})
-            elif self.path == "/api/set-profile":
-                self._send(200, inventory.set_profile(self._read_json().get("profile")))
+                pl = self._read_json()
+                self._send(200, {"rules": inventory.set_rule(pl.get("product_type", "ctl"), pl)})
             elif self.path == "/api/quotes":
                 pl = self._read_json()
                 qid = db.save_quote(pl.get("customer"), pl.get("quote_no"),
@@ -128,23 +125,30 @@ class Handler(BaseHTTPRequestHandler):
         lines = payload.get("lines", [])
         basis = (payload.get("adder_basis") or "line").lower()
         use_inv = bool(payload.get("use_inventory"))
-        rule = inventory.get_rule() if inventory.has_data() else None
-        dest = payload.get("destination")
-        fr = db.get_freight(dest) if dest else None
-        freight_arg = {"label": "Freight: " + dest, "cwt": fr["cwt"]} if fr else None
+        rules = inventory.get_rules() if inventory.has_data() else None
+        region = payload.get("destination")            # region name (kept key for back-compat)
+        region_mode = (payload.get("region_mode") or "both").lower()   # freight | comp | both
+        fr = db.get_freight(region) if region else None
+        region_adjs = []
+        if fr:
+            if region_mode in ("freight", "both") and fr["freight_cwt"]:
+                region_adjs.append({"label": "Freight: " + region, "cwt": fr["freight_cwt"]})
+            if region_mode in ("comp", "both") and fr["comp_cwt"]:
+                region_adjs.append({"label": "Region (competitive): " + region, "cwt": fr["comp_cwt"]})
         min_spread = costing.get_min_spread()
 
         def price(line, tier_weight=None):
             product = db.get_product(line["key"])
             if not product:
                 return {"key": line.get("key"), "error": "unknown product"}
-            inv = inventory.get_inventory_for(line["key"], product["grade"], rule) if rule else None
+            inv = inventory.get_inventory_for(line["key"], product["grade"], rules) if rules else None
             adj = None
             if use_inv and inv and inv.get("adjustment_cwt"):
                 mos = inv.get("months_of_supply")
-                label = "Inventory: " + inv["position"]
+                ptype = (inv.get("product_type") or "").upper()
+                label = "Inventory" + (" (" + ptype + ")" if ptype else "") + ": " + inv["position"]
                 if mos is not None:
-                    label += f" ({mos} mo proj)"
+                    label += f" ({mos} mo)"
                 adj = {"label": label, "cwt": inv["adjustment_cwt"]}
             res = pe.compute_line(
                 product,
@@ -154,7 +158,7 @@ class Handler(BaseHTTPRequestHandler):
                 custom_length=bool(line.get("custom_length")),
                 extras=line.get("extras", []),
                 inv_adjustment=adj,
-                freight=freight_arg,
+                extra_adjustments=region_adjs,
                 tier_weight=tier_weight,
                 stock_tiers=stock, length_tiers=length, extras_catalog=extras_catalog,
             )

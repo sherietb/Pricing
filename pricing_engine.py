@@ -94,7 +94,7 @@ def tier_adder(weight_lb, tiers):
 
 
 def compute_line(product, length_in, qty, *, unit="pieces", custom_length=False, extras=(),
-                 inv_adjustment=None, freight=None, tier_weight=None, stock_tiers, length_tiers, extras_catalog):
+                 inv_adjustment=None, freight=None, extra_adjustments=None, tier_weight=None, stock_tiers, length_tiers, extras_catalog):
     """
     Price a single quote line.
 
@@ -185,6 +185,10 @@ def compute_line(product, length_in, qty, *, unit="pieces", custom_length=False,
     if freight and freight.get("cwt"):
         breakdown.append({"label": freight.get("label", "Freight"),
                           "cwt": round(float(freight["cwt"]), 4)})
+
+    for a in (extra_adjustments or []):        # region freight/competitive, customer layers, etc.
+        if a and a.get("cwt"):
+            breakdown.append({"label": a.get("label", "Adjustment"), "cwt": round(float(a["cwt"]), 4)})
 
     rate = sum(item["cwt"] for item in breakdown)
     total = rate / 100.0 * weight

@@ -35,13 +35,17 @@ def latest_pricing_workbook():
 DEFAULT_WORKBOOK = latest_pricing_workbook()
 
 # Outbound freight by destination. cwt assumes ~full truckload (all_in / 46,000 lb x 100).
-FREIGHT = [
-    {"destination": "Oklahoma City, OK",  "miles": 210, "rate_per_mile": 3.80, "all_in": 800,  "cwt": 1.70},
-    {"destination": "Tulsa, OK",          "miles": 255, "rate_per_mile": 3.80, "all_in": 970,  "cwt": 2.06},
-    {"destination": "Midland/Odessa, TX", "miles": 340, "rate_per_mile": 3.50, "all_in": 1190, "cwt": 2.53},
-    {"destination": "Paris/Sumner, TX",   "miles": 100, "rate_per_mile": 4.50, "all_in": 450,  "cwt": 0.96},
-    {"destination": "Houston, TX",        "miles": 270, "rate_per_mile": 3.40, "all_in": 920,  "cwt": 1.96},
-    {"destination": "San Antonio, TX",    "miles": 275, "rate_per_mile": 3.40, "all_in": 935,  "cwt": 1.99},
+# Regions each carry a FREIGHT $/cwt and a COMPETITIVE $/cwt. On a quote the rep applies
+# freight only, competitive only, or both (they stack). freight_cwt = pass-through cost
+# (excluded from CRU Spread); comp_cwt = a price move (counts toward margin).
+# NOTE: DFW / East TX / Houston-South TX freight and ALL comp_cwt are PLACEHOLDERS - confirm.
+REGIONS = [
+    {"region": "DFW",              "freight_cwt": 0.75, "comp_cwt": 0.00},
+    {"region": "East TX",          "freight_cwt": 1.25, "comp_cwt": 0.00},
+    {"region": "OKC",              "freight_cwt": 1.70, "comp_cwt": 0.00},
+    {"region": "Tulsa",            "freight_cwt": 2.05, "comp_cwt": 0.00},
+    {"region": "Houston/South TX", "freight_cwt": 2.00, "comp_cwt": 0.00},
+    {"region": "West TX",          "freight_cwt": 2.55, "comp_cwt": 0.00},
 ]
 
 SCHEMA = """
@@ -59,7 +63,7 @@ CREATE TABLE IF NOT EXISTS stock_tiers  (tier_label TEXT, max_weight INTEGER, ad
 CREATE TABLE IF NOT EXISTS length_tiers (tier_label TEXT, max_weight INTEGER, adder_cwt REAL);
 CREATE TABLE IF NOT EXISTS extras (name TEXT PRIMARY KEY, adder_cwt REAL, selectable INTEGER DEFAULT 0);
 CREATE TABLE IF NOT EXISTS meta (k TEXT PRIMARY KEY, v TEXT);
-CREATE TABLE IF NOT EXISTS freight (destination TEXT PRIMARY KEY, miles INTEGER, rate_per_mile REAL, all_in REAL, cwt REAL);
+CREATE TABLE IF NOT EXISTS freight (destination TEXT PRIMARY KEY, freight_cwt REAL, comp_cwt REAL);
 CREATE TABLE IF NOT EXISTS quotes (
     id INTEGER PRIMARY KEY AUTOINCREMENT, created_at TEXT, customer TEXT, quote_no TEXT,
     destination TEXT, adder_basis TEXT, use_inventory INTEGER, grand_total REAL, payload TEXT
@@ -173,11 +177,19 @@ def round_005(x):
 def ensure_freight():
     conn = connect()
     conn.executescript(SCHEMA)
-    # Always re-seed from FREIGHT so edits / rounding take effect; freight is not UI-editable.
-    conn.executemany("INSERT OR REPLACE INTO freight VALUES (?,?,?,?,?)",
-                     [(f["destination"], f["miles"], f["rate_per_mile"], f["all_in"], round_005(f["cwt"]))
-                      for f in FREIGHT])
-    conn.commit()
+    reseed = False
+    try:
+        current = {r[0] for r in conn.execute("SELECT destination FROM freight WHERE freight_cwt IS NOT NULL")}
+        if current != {r["region"] for r in REGIONS}:
+            reseed = True   # regions added/removed
+    except sqlite3.OperationalError:
+        reseed = True       # old schema (no freight_cwt column)
+    if reseed:
+        conn.execute("DROP TABLE IF EXISTS freight")
+        conn.executescript(SCHEMA)
+        conn.executemany("INSERT OR REPLACE INTO freight VALUES (?,?,?)",
+                         [(r["region"], round_005(r["freight_cwt"]), round_005(r["comp_cwt"])) for r in REGIONS])
+        conn.commit()
     conn.close()
 
 
@@ -200,7 +212,7 @@ def bootstrap():
     extras = [dict(r) for r in conn.execute(
         "SELECT name, adder_cwt FROM extras WHERE selectable=1 ORDER BY name")]
     meta = {r["k"]: r["v"] for r in conn.execute("SELECT k, v FROM meta")}
-    freight = [dict(r) for r in conn.execute("SELECT destination, miles, rate_per_mile, all_in, cwt FROM freight ORDER BY cwt")]
+    freight = [dict(r) for r in conn.execute("SELECT destination, freight_cwt, comp_cwt FROM freight ORDER BY destination")]
     conn.close()
     return {"products": prods, "extras": extras, "meta": meta, "freight": freight}
 
