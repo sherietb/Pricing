@@ -105,6 +105,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(200, {"cost_config": cfg})
             elif self.path == "/api/reimport-inventory":
                 self._send(200, {"imported": inventory.import_inventory()})
+            elif self.path == "/api/refresh-from-db":
+                self._send(200, {"imported": inventory.import_inventory_from_db()})
             elif self.path == "/api/admin/inv-rule":
                 pl = self._read_json()
                 self._send(200, {"rules": inventory.set_rule(pl.get("product_type", "ctl"), pl)})
@@ -222,8 +224,12 @@ def main():
         print("No database found -- importing from workbook...")
         db.import_from_workbook()
     try:
-        if inventory.maybe_auto_import():
-            print("Inventory imported/refreshed on startup.")
+        if inventory.db_available():
+            print("Refreshing inventory live from SQL Server...")
+            inventory.import_inventory_from_db()
+            print("Inventory loaded from database.")
+        elif inventory.maybe_auto_import():
+            print("Inventory imported/refreshed from workbook.")
     except Exception as exc:
         print("Inventory not loaded:", exc)
     try:

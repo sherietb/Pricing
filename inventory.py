@@ -18,9 +18,16 @@ import os
 import sqlite3
 from datetime import datetime, timezone
 
-DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "pricing.db")
-DEFAULT_WORKBOOK = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                                "Inventory Coil Projections V1.xlsx")
+HERE = os.path.dirname(os.path.abspath(__file__))
+DB_PATH = os.path.join(HERE, "pricing.db")
+DEFAULT_WORKBOOK = os.path.join(HERE, "Inventory Coil Projections V1.xlsx")
+
+# Direct SQL Server source (the same query that feeds the workbook). Windows auth =
+# no stored password. Override the connection string via env var if needed.
+SOURCE_DB_CONN = os.environ.get(
+    "PRICING_INV_DB_CONN",
+    "DRIVER={SQL Server};SERVER=10.0.1.50;DATABASE=Inventory_Planning;Trusted_Connection=yes")
+SOURCE_QUERY_FILE = os.path.join(HERE, "inventory_query.sql")
 
 # Inventory-position ranking, kept SEPARATELY for CTL (cut-to-length coil) and discrete
 # PLATE so each can be tuned on its own. Rule per type: months-on-hand < short_months ->
@@ -222,6 +229,103 @@ def import_inventory(path=DEFAULT_WORKBOOK):
     conn.close()
     init_rule()
     return {"skus": len(sku_rows), "grades": len(grade_rows), "sku_moh": len(sku_moh_rows)}
+
+
+def db_available():
+    """True if the SQL Server source is reachable/usable right now."""
+    try:
+        import pyodbc
+    except Exception:
+        return False
+    if not os.path.exists(SOURCE_QUERY_FILE):
+        return False
+    try:
+        cn = pyodbc.connect(SOURCE_DB_CONN, timeout=4)
+        cn.close()
+        return True
+    except Exception:
+        return False
+
+
+def import_inventory_from_db():
+    """Pull inventory LIVE from SQL Server (same query as the workbook) and populate
+    inventory_sku + inventory_sku_moh directly - no spreadsheet export needed.
+    Months-on-hand = (on-hand + PO) / 6-month-avg monthly consumption."""
+    import pyodbc
+    sql = open(SOURCE_QUERY_FILE, encoding="utf-8").read()
+    cn = pyodbc.connect(SOURCE_DB_CONN, timeout=20)
+    cur = cn.cursor(); cur.execute(sql)
+    cols = [c[0] for c in cur.description]
+    i = {c: n for n, c in enumerate(cols)}
+    rows = cur.fetchall(); cn.close()
+    monthly_cols = [c for c in ("Tot_C_1M", "c_lbs_2mth", "c_lbs_3mth", "c_lbs_4mth", "c_lbs_5mth", "c_lbs_6mth") if c in i]
+
+    def n(v):
+        try:
+            return float(v)
+        except (TypeError, ValueError):
+            return 0.0
+
+    det = {}
+    for r in rows:
+        grade, size, w = r[i["grade"]], r[i["size"]], r[i["W"]]
+        if grade is None or size is None or w is None:
+            continue
+        width = str(int(w)) if isinstance(w, (int, float)) else str(w).strip()
+        try:
+            width = str(int(float(width)))
+        except ValueError:
+            pass
+        g = _norm_grade(grade)
+        key = "-".join(p for p in (str(size).strip(), width, g) if p)
+        d = det.setdefault(key, {"grade": g, "size": str(size).strip(), "width": width,
+                                 "ohd": 0.0, "res": 0.0, "inc": 0.0, "po": 0.0, "cst_lbs": 0.0,
+                                 "cc": 0.0, "fpco": 0.0, "cons6": 0.0, "cons1": 0.0})
+        ohd, po = n(r[i["ohd_lbs"]]), n(r[i["po_lbs_tot"]])
+        d["ohd"] += ohd
+        d["res"] += n(r[i["tot_res_lbs"]])
+        d["inc"] += n(r[i["incoming_lbs"]])
+        d["po"] += po
+        d["cst_lbs"] += n(r[i["ohd_cst"]]) * ohd
+        d["cons6"] += sum(n(r[i[c]]) for c in monthly_cols)     # 6 monthly totals
+        d["cons1"] += n(r[i["Tot_C_1M"]]) if "Tot_C_1M" in i else 0.0
+        fw = ohd + po
+        if str(r[i["form"]] or "").strip().upper() == "FPCO":
+            d["fpco"] += fw
+        else:
+            d["cc"] += fw
+
+    sku_rows, sku_moh_rows, grade_acc = [], [], {}
+    for k, d in det.items():
+        avail = d["ohd"] - d["res"]
+        ptype = "plate" if d["fpco"] > d["cc"] else "ctl"
+        cost = round(d["cst_lbs"] / d["ohd"], 2) if d["ohd"] > 0 else None
+        sku_rows.append((k, d["grade"], d["size"], d["width"], d["ohd"], d["res"],
+                         avail, d["inc"], d["po"], cost, ptype))
+        monthly = d["cons6"] / (len(monthly_cols) or 1)          # 6-mo avg monthly consumption
+        # reuse the sku_moh formula months = w1_lbs / forecast  ->  (ohd+po) / monthly
+        sku_moh_rows.append((k, d["ohd"], avail, d["po"], d["cons1"], monthly, monthly, d["ohd"] + d["po"]))
+        a = grade_acc.setdefault(d["grade"], dict(ohd=0.0, avail=0.0, po=0.0, c1=0.0, c6=0.0, fc=0.0, moh=0.0, n=0))
+        a["ohd"] += d["ohd"]; a["avail"] += avail; a["po"] += d["po"]; a["c1"] += d["cons1"]; a["c6"] += monthly; a["fc"] += monthly; a["n"] += 1
+    grade_rows = [(g, a["ohd"], a["avail"], a["po"], a["c1"], a["c6"], a["fc"], 0.0) for g, a in grade_acc.items()]
+
+    conn = connect()
+    conn.execute("DROP TABLE IF EXISTS inventory_sku")
+    conn.execute("DROP TABLE IF EXISTS inventory_sku_moh")
+    conn.executescript(SCHEMA)
+    for t in ("inventory_sku", "inventory_grade", "inventory_sku_moh"):
+        conn.execute("DELETE FROM " + t)
+    conn.executemany("INSERT OR REPLACE INTO inventory_sku VALUES (?,?,?,?,?,?,?,?,?,?,?)", sku_rows)
+    conn.executemany("INSERT OR REPLACE INTO inventory_grade VALUES (?,?,?,?,?,?,?,?)", grade_rows)
+    conn.executemany("INSERT OR REPLACE INTO inventory_sku_moh VALUES (?,?,?,?,?,?,?,?)", sku_moh_rows)
+    now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    conn.execute("INSERT OR REPLACE INTO meta VALUES ('last_inventory_import', ?)", (now,))
+    conn.execute("INSERT OR REPLACE INTO meta VALUES ('inv_source_mtime', ?)", (str(datetime.now().timestamp()),))
+    conn.execute("INSERT OR REPLACE INTO meta VALUES ('inv_source_file', 'SQL Server: Inventory_Planning (live)')")
+    conn.commit()
+    conn.close()
+    init_rule()
+    return {"skus": len(sku_rows), "grades": len(grade_rows), "sku_moh": len(sku_moh_rows), "source": "database"}
 
 
 def maybe_auto_import(path=DEFAULT_WORKBOOK):

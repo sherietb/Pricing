@@ -205,7 +205,8 @@
         <div><label>Premium $/cwt</label><input id="plate_adjshort" type="number" step="0.25"></div>
         <div><label>Discount $/cwt</label><input id="plate_adjlong" type="number" step="0.25"></div>
         <div style="align-self:end"><button class="ghost" id="saverule">Save inventory rules</button></div>
-        <div style="align-self:end"><button class="ghost" id="reimportinv">Re-import inventory</button></div>
+        <div style="align-self:end"><button class="primary" id="refreshdb">Refresh from database (live)</button></div>
+        <div style="align-self:end"><button class="ghost" id="reimportinv">Re-import from spreadsheet</button></div>
       </div>
       <div class="msg" id="invmsg"></div>
       <hr style="border:none;border-top:1px solid var(--line);margin:16px 0">
@@ -494,6 +495,12 @@ window.editCust=name=>{
 window.removeCust=async name=>{
   await fetch("/api/admin/customer-delete",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({name})});
   await boot();await refresh();
+};
+$("refreshdb").onclick=async()=>{
+  const m=$("invmsg");m.className="msg";m.textContent="Querying SQL Server (live)...";
+  const r=await (await fetch("/api/refresh-from-db",{method:"POST"})).json();
+  if(r.error){m.className="msg err";m.textContent="DB refresh failed: "+r.error;}
+  else{m.className="msg ok";m.textContent="Live refresh: "+r.imported.skus+" SKUs from database.";await boot();await refresh();}
 };
 $("reimportinv").onclick=async()=>{
   const m=$("invmsg");m.className="msg";m.textContent="Importing inventory...";

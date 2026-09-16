@@ -24,3 +24,6 @@ _*.js
 
 # Customer list (proprietary)
 Customers.csv
+
+# Internal DB query + connection (proprietary)
+inventory_query.sql
