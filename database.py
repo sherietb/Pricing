@@ -388,6 +388,51 @@ def customer_adjustments(name):
     return adjs
 
 
+CUST_DB_CONN = os.environ.get(
+    "PRICING_CUST_DB_CONN",
+    "DRIVER={SQL Server};SERVER=10.0.1.50;DATABASE=Planning;Trusted_Connection=yes")
+
+
+def customers_db_available():
+    try:
+        import pyodbc
+        cn = pyodbc.connect(CUST_DB_CONN, timeout=4); cn.close()
+        return True
+    except Exception:
+        return False
+
+
+def import_customers_from_db():
+    """Pull active customers + credit status live from the ERP (Planning.dbo.transports).
+    Credit code 'H' (hold) -> high risk, else low. Preserves each customer's
+    admin-assigned playbook/segment (those aren't in the ERP)."""
+    import pyodbc
+    cn = pyodbc.connect(CUST_DB_CONN, timeout=20)
+    cur = cn.cursor()
+    cur.execute("""SELECT customer_name, MAX(credit_status)
+                   FROM dbo.transports
+                   WHERE customer_name IS NOT NULL AND LTRIM(RTRIM(customer_name)) <> ''
+                   GROUP BY customer_name""")
+    rows = cur.fetchall()
+    cn.close()
+    existing = {c["name"]: c for c in list_customers()}
+    conn = connect()
+    conn.executescript(SCHEMA)
+    n = 0
+    for name, cs in rows:
+        name = (name or "").strip()
+        if not name:
+            continue
+        credit = "high" if str(cs or "").strip().upper() == "H" else "low"
+        ex = existing.get(name)
+        conn.execute("INSERT OR REPLACE INTO customers VALUES (?,?,?,?)",
+                     (name, ex["segment"] if ex else "", ex["playbook"] if ex else 2, credit))
+        n += 1
+    conn.commit()
+    conn.close()
+    return {"imported": n}
+
+
 def import_customers_csv(path=None):
     """Bulk-load customers from a CSV with columns name, segment, playbook, credit."""
     import csv

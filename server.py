@@ -120,6 +120,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(200, {"cust_config": db.set_cust_config(self._read_json())})
             elif self.path == "/api/admin/import-customers":
                 self._send(200, db.import_customers_csv())
+            elif self.path == "/api/admin/pull-customers-db":
+                self._send(200, db.import_customers_from_db())
             elif self.path == "/api/quotes":
                 pl = self._read_json()
                 qid = db.save_quote(pl.get("customer"), pl.get("quote_no"),

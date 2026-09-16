@@ -238,6 +238,7 @@
           <option value="low" selected>Low risk</option>
           <option value="high">High risk</option></select></div>
         <div style="align-self:end"><button class="ghost" id="cu_save">Save customer</button></div>
+        <div style="align-self:end"><button class="primary" id="cu_pulldb">Pull customers from database</button></div>
         <div style="align-self:end"><button class="ghost" id="cu_import">Import Customers.csv</button></div>
       </div>
       <div class="grid" style="margin-top:8px">
@@ -476,6 +477,12 @@ $("cu_save").onclick=async()=>{
   const m=$("custmsg");
   if(r.customer){m.className="msg ok";m.textContent="Saved "+r.customer.name+".";$("cu_name").value="";$("cu_segment").value="";await boot();}
   else{m.className="msg err";m.textContent="Save failed (name required).";}
+};
+$("cu_pulldb").onclick=async()=>{
+  const m=$("custmsg");m.className="msg";m.textContent="Pulling customers from database...";
+  const r=await (await fetch("/api/admin/pull-customers-db",{method:"POST"})).json();
+  if(r.error){m.className="msg err";m.textContent="DB pull failed: "+r.error;}
+  else{m.className="msg ok";m.textContent="Pulled "+r.imported+" customers (names + credit) from ERP.";await boot();}
 };
 $("cu_import").onclick=async()=>{
   const m=$("custmsg");m.className="msg";m.textContent="Importing Customers.csv...";
