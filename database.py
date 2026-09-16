@@ -69,14 +69,17 @@ CREATE TABLE IF NOT EXISTS quotes (
     destination TEXT, adder_basis TEXT, use_inventory INTEGER, grand_total REAL, payload TEXT
 );
 CREATE TABLE IF NOT EXISTS customers (
-    name TEXT PRIMARY KEY, segment TEXT, playbook INTEGER, credit TEXT
+    name TEXT PRIMARY KEY, segment TEXT, playbook INTEGER, credit TEXT,
+    dyn_cwt REAL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS cust_config (k TEXT PRIMARY KEY, v REAL);
 """
 
-# Customer pricing layers ($/cwt), tunable in Admin. Playbook 1/2/3 and credit High/Low.
+# Customer pricing layers ($/cwt), tunable in Admin. Playbook 1/2/3, credit High/Low,
+# and a DYNAMIC margin that ratchets up per win (capped) and eases back per loss.
 CUSTOMER_CONFIG = {"pb1_cwt": -2.0, "pb2_cwt": 0.0, "pb3_cwt": 2.0,
-                   "credit_high_cwt": 2.0, "credit_low_cwt": 0.0}
+                   "credit_high_cwt": 2.0, "credit_low_cwt": 0.0,
+                   "dyn_step_cwt": 0.5, "dyn_cap_cwt": 3.0, "dyn_loss_cwt": 0.5}
 
 
 def connect():
@@ -334,9 +337,12 @@ def set_cust_config(updates):
 
 
 def list_customers():
+    _ensure_quote_status()   # guarantees the dyn_cwt column on pre-existing DBs
     conn = connect()
     conn.executescript(SCHEMA)
-    rows = [dict(r) for r in conn.execute("SELECT name, segment, playbook, credit FROM customers ORDER BY name")]
+    rows = [dict(r) for r in conn.execute(
+        "SELECT name, segment, playbook, credit, COALESCE(dyn_cwt,0) dyn_cwt "
+        "FROM customers ORDER BY name")]
     conn.close()
     return rows
 
@@ -357,10 +363,15 @@ def upsert_customer(name, segment=None, playbook=2, credit="low"):
         raise ValueError("customer name required")
     pb = int(playbook) if playbook in (1, 2, 3, "1", "2", "3") else 2
     credit = "high" if str(credit).lower().startswith("h") else "low"
+    _ensure_quote_status()   # dyn_cwt column
     conn = connect()
     conn.executescript(SCHEMA)
-    conn.execute("INSERT OR REPLACE INTO customers VALUES (?,?,?,?)",
-                 (name, (segment or "").strip(), pb, credit))
+    # Upsert without clobbering the dynamic margin the win/loss history has built up.
+    conn.execute(
+        "INSERT INTO customers (name, segment, playbook, credit) VALUES (?,?,?,?) "
+        "ON CONFLICT(name) DO UPDATE SET segment=excluded.segment, "
+        "playbook=excluded.playbook, credit=excluded.credit",
+        (name, (segment or "").strip(), pb, credit))
     conn.commit()
     conn.close()
     return get_customer(name)
@@ -387,6 +398,9 @@ def customer_adjustments(name):
         adjs.append({"label": "Playbook %d" % c["playbook"], "cwt": pb_amt})
     if (c["credit"] or "low") == "high" and cfg.get("credit_high_cwt"):
         adjs.append({"label": "Credit: High Risk", "cwt": cfg["credit_high_cwt"]})
+    dyn = c.get("dyn_cwt") or 0.0
+    if dyn:
+        adjs.append({"label": "Dynamic margin (won history)", "cwt": dyn})
     return adjs
 
 
@@ -402,10 +416,31 @@ DASH_DEFAULT = {"conv_alert_pct": 60.0}
 def _ensure_quote_status():
     conn = connect()
     conn.executescript(SCHEMA)
-    cols = {r[1] for r in conn.execute("PRAGMA table_info(quotes)")}
-    if "status" not in cols:
+    qcols = {r[1] for r in conn.execute("PRAGMA table_info(quotes)")}
+    if "status" not in qcols:
         conn.execute("ALTER TABLE quotes ADD COLUMN status TEXT DEFAULT 'open'")
+    ccols = {r[1] for r in conn.execute("PRAGMA table_info(customers)")}
+    if "dyn_cwt" not in ccols:
+        conn.execute("ALTER TABLE customers ADD COLUMN dyn_cwt REAL DEFAULT 0")
     conn.execute("CREATE TABLE IF NOT EXISTS dash_config (k TEXT PRIMARY KEY, v REAL)")
+    conn.commit()
+    conn.close()
+
+
+def _apply_dynamic(name, outcome):
+    """Ratchet a customer's dynamic margin: +step per win (capped), -backoff per loss."""
+    cfg = get_cust_config()
+    c = get_customer(name)
+    if not c:
+        return
+    dyn = c.get("dyn_cwt") or 0.0
+    if outcome == "won":
+        dyn = min(dyn + cfg["dyn_step_cwt"], cfg["dyn_cap_cwt"])
+    elif outcome == "lost":
+        dyn = max(dyn - cfg["dyn_loss_cwt"], 0.0)
+    conn = connect()
+    conn.executescript(SCHEMA)
+    conn.execute("UPDATE customers SET dyn_cwt=? WHERE name=?", (round(dyn, 2), name))
     conn.commit()
     conn.close()
 
@@ -414,10 +449,21 @@ def set_quote_status(qid, status):
     _ensure_quote_status()
     status = status if status in ("open", "won", "lost") else "open"
     conn = connect()
-    n = conn.execute("UPDATE quotes SET status=? WHERE id=?", (status, qid)).rowcount
+    row = conn.execute("SELECT COALESCE(status,'open'), payload FROM quotes WHERE id=?", (qid,)).fetchone()
+    if not row:
+        conn.close(); return 0
+    prior = row[0]
+    conn.execute("UPDATE quotes SET status=? WHERE id=?", (status, qid))
     conn.commit()
     conn.close()
-    return n
+    if status != prior and status in ("won", "lost"):   # only on a real transition
+        try:
+            name = json.loads(row[1]).get("customer_name")
+        except Exception:
+            name = None
+        if name:
+            _apply_dynamic(name, status)
+    return 1
 
 
 def get_dash_config():
@@ -530,7 +576,7 @@ def import_customers_from_db():
                    GROUP BY customer_name""")
     rows = cur.fetchall()
     cn.close()
-    existing = {c["name"]: c for c in list_customers()}
+    existing = {c["name"]: c for c in list_customers()}   # also runs the dyn_cwt migration
     conn = connect()
     conn.executescript(SCHEMA)
     n = 0
@@ -540,8 +586,11 @@ def import_customers_from_db():
             continue
         credit = "high" if str(cs or "").strip().upper() == "H" else "low"
         ex = existing.get(name)
-        conn.execute("INSERT OR REPLACE INTO customers VALUES (?,?,?,?)",
-                     (name, ex["segment"] if ex else "", ex["playbook"] if ex else 2, credit))
+        # ON CONFLICT preserves each customer's dyn_cwt (their earned margin history).
+        conn.execute(
+            "INSERT INTO customers (name, segment, playbook, credit) VALUES (?,?,?,?) "
+            "ON CONFLICT(name) DO UPDATE SET credit=excluded.credit",
+            (name, ex["segment"] if ex else "", ex["playbook"] if ex else 2, credit))
         n += 1
     conn.commit()
     conn.close()

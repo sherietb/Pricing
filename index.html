@@ -268,7 +268,14 @@
         <div><label>Credit High Risk $/cwt</label><input id="credit_high" type="number" step="0.25"></div>
         <div style="align-self:end"><button class="ghost" id="cu_saveconfig">Save amounts</button></div>
       </div>
-      <table style="margin-top:10px"><thead><tr><th>Customer</th><th>Segment</th><th class="num">Playbook</th><th>Credit</th><th></th></tr></thead>
+      <div style="font-weight:600;color:var(--muted);margin:12px 0 4px">Dynamic margin — auto-ratchets per customer as quotes are won/lost</div>
+      <div class="grid">
+        <div><label>Step per win $/cwt</label><input id="dyn_step" type="number" step="0.25"></div>
+        <div><label>Cap (max) $/cwt</label><input id="dyn_cap" type="number" step="0.25"></div>
+        <div><label>Back-off per loss $/cwt</label><input id="dyn_loss" type="number" step="0.25"></div>
+        <div style="align-self:end"><button class="ghost" id="cu_savedyn">Save dynamic</button></div>
+      </div>
+      <table style="margin-top:10px"><thead><tr><th>Customer</th><th>Segment</th><th class="num">Playbook</th><th>Credit</th><th class="num">Dynamic $/cwt</th><th></th></tr></thead>
         <tbody id="custbody"></tbody></table>
       <div class="msg" id="custmsg"></div>
     </details>
@@ -331,15 +338,17 @@ async function boot(){
   showCustNote();
   const ucc=DATA.cust_config||{};
   if($("pb1")){$("pb1").value=ucc.pb1_cwt;$("pb2").value=ucc.pb2_cwt;$("pb3").value=ucc.pb3_cwt;$("credit_high").value=ucc.credit_high_cwt;}
+  if($("dyn_step")){$("dyn_step").value=ucc.dyn_step_cwt;$("dyn_cap").value=ucc.dyn_cap_cwt;$("dyn_loss").value=ucc.dyn_loss_cwt;}
   if($("custbody")) $("custbody").innerHTML=custs.map(c=>"<tr><td>"+c.name+"</td><td>"+(c.segment||"—")+
      '</td><td class="num">'+c.playbook+"</td><td>"+(c.credit==="high"?"High risk":"Low risk")+"</td>"+
+     '<td class="num">'+(c.dyn_cwt?("+"+(+c.dyn_cwt).toFixed(2)):"—")+"</td>"+
      '<td><button class="ghost" onclick="editCust('+JSON.stringify(c.name).replace(/"/g,"&quot;")+')">Edit</button> '+
      '<button class="ghost" onclick="removeCust('+JSON.stringify(c.name).replace(/"/g,"&quot;")+')">✕</button></td></tr>').join("");
   fillThickness();
 }
 function showCustNote(){
   const c=(DATA.customers||[]).find(x=>x.name===$("custselect").value);
-  $("custnote").textContent=c?("Playbook "+c.playbook+" · "+(c.credit==="high"?"High risk":"Low risk")+(c.segment?" · "+c.segment:"")):"";
+  $("custnote").textContent=c?("Playbook "+c.playbook+" · "+(c.credit==="high"?"High risk":"Low risk")+(c.segment?" · "+c.segment:"")+(c.dyn_cwt?" · dynamic +$"+(+c.dyn_cwt).toFixed(2)+"/cwt":"")):"";
 }
 function orderBy(prods,field){
   const m=new Map();
@@ -514,6 +523,11 @@ $("cu_saveconfig").onclick=async()=>{
   const body={pb1_cwt:parseFloat($("pb1").value),pb2_cwt:parseFloat($("pb2").value),pb3_cwt:parseFloat($("pb3").value),credit_high_cwt:parseFloat($("credit_high").value)};
   await fetch("/api/admin/customer-config",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
   const m=$("custmsg");m.className="msg ok";m.textContent="Amounts saved.";await boot();await refresh();
+};
+$("cu_savedyn").onclick=async()=>{
+  const body={dyn_step_cwt:parseFloat($("dyn_step").value),dyn_cap_cwt:parseFloat($("dyn_cap").value),dyn_loss_cwt:parseFloat($("dyn_loss").value)};
+  await fetch("/api/admin/customer-config",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
+  const m=$("custmsg");m.className="msg ok";m.textContent="Dynamic margin settings saved.";await boot();await refresh();
 };
 window.editCust=name=>{
   const c=(DATA.customers||[]).find(x=>x.name===name); if(!c) return;
