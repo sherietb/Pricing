@@ -21,3 +21,6 @@ __pycache__/
 _*.py
 _*.txt
 _*.js
+
+# Customer list (proprietary)
+Customers.csv

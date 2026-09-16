@@ -110,7 +110,11 @@
     </div>
     <h2 class="no-print">Quote</h2>
     <div class="qmeta no-print">
-      <div><label>Customer / job (optional)</label><input id="customer" type="text" placeholder="e.g. Acme Fab - PO 4821"></div>
+      <div><label>Customer</label>
+        <select id="custselect" style="width:100%"></select>
+        <span id="custnote" class="sub2"></span>
+      </div>
+      <div><label>Job / PO (optional)</label><input id="customer" type="text" placeholder="e.g. PO 4821"></div>
       <div><label>Quote #</label><input id="quoteno" type="text" placeholder="optional"></div>
     </div>
     <div class="basis no-print">
@@ -220,6 +224,31 @@
         <div style="align-self:end"><button class="ghost" id="savecost">Save cost</button></div>
       </div>
       <div class="msg" id="costmsg"></div>
+      <hr style="border:none;border-top:1px solid var(--line);margin:16px 0">
+      <div style="font-weight:600;color:var(--muted);margin-bottom:8px">Customers — playbook &amp; credit</div>
+      <div class="grid">
+        <div><label>Customer name</label><input id="cu_name" type="text" placeholder="e.g. GST"></div>
+        <div><label>Segment</label><input id="cu_segment" type="text" placeholder="optional"></div>
+        <div><label>Playbook</label><select id="cu_playbook">
+          <option value="1">1 - most competitive</option>
+          <option value="2" selected>2 - mid</option>
+          <option value="3">3 - least competitive</option></select></div>
+        <div><label>Credit</label><select id="cu_credit">
+          <option value="low" selected>Low risk</option>
+          <option value="high">High risk</option></select></div>
+        <div style="align-self:end"><button class="ghost" id="cu_save">Save customer</button></div>
+        <div style="align-self:end"><button class="ghost" id="cu_import">Import Customers.csv</button></div>
+      </div>
+      <div class="grid" style="margin-top:8px">
+        <div><label>Playbook 1 $/cwt</label><input id="pb1" type="number" step="0.25"></div>
+        <div><label>Playbook 2 $/cwt</label><input id="pb2" type="number" step="0.25"></div>
+        <div><label>Playbook 3 $/cwt</label><input id="pb3" type="number" step="0.25"></div>
+        <div><label>Credit High Risk $/cwt</label><input id="credit_high" type="number" step="0.25"></div>
+        <div style="align-self:end"><button class="ghost" id="cu_saveconfig">Save amounts</button></div>
+      </div>
+      <table style="margin-top:10px"><thead><tr><th>Customer</th><th>Segment</th><th class="num">Playbook</th><th>Credit</th><th></th></tr></thead>
+        <tbody id="custbody"></tbody></table>
+      <div class="msg" id="custmsg"></div>
     </details>
   </div>
 </main>
@@ -271,7 +300,24 @@ async function boot(){
   if($("c_minspread")&&DATA.cost_config){const cc=DATA.cost_config;
     $("c_minspread").value=cc.min_spread_pct;$("c_hrc").value=cc.hrc;
     $("c_narrow").value=cc.plate_narrow;$("c_wide").value=cc.plate_wide;$("c_120").value=cc.plate_120;}
+  // customers
+  const custs=DATA.customers||[];
+  const prevCust=$("custselect").value;
+  $("custselect").innerHTML='<option value="">— none —</option>'+
+     custs.map(c=>'<option value="'+c.name+'">'+c.name+" (PB"+c.playbook+(c.credit==="high"?", High risk":"")+")</option>").join("");
+  if(prevCust) $("custselect").value=prevCust;
+  showCustNote();
+  const ucc=DATA.cust_config||{};
+  if($("pb1")){$("pb1").value=ucc.pb1_cwt;$("pb2").value=ucc.pb2_cwt;$("pb3").value=ucc.pb3_cwt;$("credit_high").value=ucc.credit_high_cwt;}
+  if($("custbody")) $("custbody").innerHTML=custs.map(c=>"<tr><td>"+c.name+"</td><td>"+(c.segment||"—")+
+     '</td><td class="num">'+c.playbook+"</td><td>"+(c.credit==="high"?"High risk":"Low risk")+"</td>"+
+     '<td><button class="ghost" onclick="editCust('+JSON.stringify(c.name).replace(/"/g,"&quot;")+')">Edit</button> '+
+     '<button class="ghost" onclick="removeCust('+JSON.stringify(c.name).replace(/"/g,"&quot;")+')">✕</button></td></tr>').join("");
   fillThickness();
+}
+function showCustNote(){
+  const c=(DATA.customers||[]).find(x=>x.name===$("custselect").value);
+  $("custnote").textContent=c?("Playbook "+c.playbook+" · "+(c.credit==="high"?"High risk":"Low risk")+(c.segment?" · "+c.segment:"")):"";
 }
 function orderBy(prods,field){
   const m=new Map();
@@ -364,7 +410,7 @@ async function refresh(){
   $("qactions").style.display=empty?"none":"";
   if(empty){$("qbody").innerHTML="";$("grand").textContent="";$("orderwt").textContent="";return;}
   const res=await (await fetch("/api/quote",{method:"POST",headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({lines:LINES,adder_basis:basis(),use_inventory:$("useinv")&&$("useinv").checked,destination:$("dest").value,region_mode:$("regionmode").value})})).json();
+      body:JSON.stringify({lines:LINES,adder_basis:basis(),use_inventory:$("useinv")&&$("useinv").checked,destination:$("dest").value,region_mode:$("regionmode").value,customer_name:$("custselect").value})})).json();
   $("qbody").innerHTML=res.lines.map((r,i)=>{
     const L=LINES[i];
     const qtyInput=L?'<input type="number" min="0" step="any" value="'+L.qty+'" onchange="setQty('+i+',this.value)" style="width:64px;padding:2px 4px"> '+(UNIT_LABEL[L.unit]||L.unit):"";
@@ -422,6 +468,33 @@ $("reimport").onclick=async()=>{
 if($("useinv")) $("useinv").onchange=refresh;
 $("dest").onchange=refresh;
 $("regionmode").onchange=refresh;
+$("custselect").onchange=()=>{showCustNote();refresh();};
+$("cu_save").onclick=async()=>{
+  const body={name:$("cu_name").value,segment:$("cu_segment").value,playbook:parseInt($("cu_playbook").value),credit:$("cu_credit").value};
+  const r=await (await fetch("/api/admin/customer",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)})).json();
+  const m=$("custmsg");
+  if(r.customer){m.className="msg ok";m.textContent="Saved "+r.customer.name+".";$("cu_name").value="";$("cu_segment").value="";await boot();}
+  else{m.className="msg err";m.textContent="Save failed (name required).";}
+};
+$("cu_import").onclick=async()=>{
+  const m=$("custmsg");m.className="msg";m.textContent="Importing Customers.csv...";
+  const r=await (await fetch("/api/admin/import-customers",{method:"POST"})).json();
+  if(r.error){m.className="msg err";m.textContent=r.error;}
+  else{m.className="msg ok";m.textContent="Imported "+r.imported+" customers.";await boot();}
+};
+$("cu_saveconfig").onclick=async()=>{
+  const body={pb1_cwt:parseFloat($("pb1").value),pb2_cwt:parseFloat($("pb2").value),pb3_cwt:parseFloat($("pb3").value),credit_high_cwt:parseFloat($("credit_high").value)};
+  await fetch("/api/admin/customer-config",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
+  const m=$("custmsg");m.className="msg ok";m.textContent="Amounts saved.";await boot();await refresh();
+};
+window.editCust=name=>{
+  const c=(DATA.customers||[]).find(x=>x.name===name); if(!c) return;
+  $("cu_name").value=c.name;$("cu_segment").value=c.segment||"";$("cu_playbook").value=c.playbook;$("cu_credit").value=c.credit||"low";
+};
+window.removeCust=async name=>{
+  await fetch("/api/admin/customer-delete",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({name})});
+  await boot();await refresh();
+};
 $("reimportinv").onclick=async()=>{
   const m=$("invmsg");m.className="msg";m.textContent="Importing inventory...";
   const r=await (await fetch("/api/reimport-inventory",{method:"POST"})).json();
@@ -457,7 +530,7 @@ $("savecost").onclick=async()=>{
 $("savequote").onclick=async()=>{
   if(!LINES.length) return;
   const body={customer:$("customer").value,quote_no:$("quoteno").value,grand_total:window.LAST_GRAND||0,
-     quote:{lines:LINES,adder_basis:basis(),use_inventory:$("useinv")&&$("useinv").checked,destination:$("dest").value,region_mode:$("regionmode").value}};
+     quote:{lines:LINES,adder_basis:basis(),use_inventory:$("useinv")&&$("useinv").checked,destination:$("dest").value,region_mode:$("regionmode").value,customer_name:$("custselect").value}};
   const r=await (await fetch("/api/quotes",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)})).json();
   $("savemsg").textContent=r.id?("Saved #"+r.id):"Save failed";
   setTimeout(()=>{$("savemsg").textContent="";},2500);
@@ -479,6 +552,7 @@ window.openQuote=async id=>{
   $("customer").value=q.customer||""; $("quoteno").value=q.quote_no||"";
   if($("dest")) $("dest").value=p.destination||"";
   if($("regionmode")) $("regionmode").value=p.region_mode||"both";
+  if($("custselect")) { $("custselect").value=p.customer_name||""; showCustNote(); }
   const rb=document.querySelector('input[name="basis"][value="'+(p.adder_basis||"line")+'"]'); if(rb) rb.checked=true;
   if($("useinv")) $("useinv").checked=!!p.use_inventory;
   LINES=(p.lines||[]).slice();

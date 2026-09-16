@@ -78,6 +78,8 @@ class Handler(BaseHTTPRequestHandler):
             data["inv_rules"] = inventory.get_rules()   # {'ctl': {...}, 'plate': {...}}
             data["inventory_meta"] = inventory.get_meta()
             data["cost_config"] = costing.get_config()
+            data["customers"] = db.list_customers()
+            data["cust_config"] = db.get_cust_config()
             self._send(200, data)
         else:
             self._send(404, {"error": "not found"})
@@ -106,6 +108,16 @@ class Handler(BaseHTTPRequestHandler):
             elif self.path == "/api/admin/inv-rule":
                 pl = self._read_json()
                 self._send(200, {"rules": inventory.set_rule(pl.get("product_type", "ctl"), pl)})
+            elif self.path == "/api/admin/customer":
+                pl = self._read_json()
+                self._send(200, {"customer": db.upsert_customer(pl.get("name"), pl.get("segment"),
+                                                                pl.get("playbook", 2), pl.get("credit", "low"))})
+            elif self.path == "/api/admin/customer-delete":
+                self._send(200, {"deleted": db.delete_customer(self._read_json().get("name"))})
+            elif self.path == "/api/admin/customer-config":
+                self._send(200, {"cust_config": db.set_cust_config(self._read_json())})
+            elif self.path == "/api/admin/import-customers":
+                self._send(200, db.import_customers_csv())
             elif self.path == "/api/quotes":
                 pl = self._read_json()
                 qid = db.save_quote(pl.get("customer"), pl.get("quote_no"),
@@ -135,6 +147,7 @@ class Handler(BaseHTTPRequestHandler):
                 region_adjs.append({"label": "Freight: " + region, "cwt": fr["freight_cwt"]})
             if region_mode in ("comp", "both") and fr["comp_cwt"]:
                 region_adjs.append({"label": "Region (competitive): " + region, "cwt": fr["comp_cwt"]})
+        region_adjs += db.customer_adjustments(payload.get("customer_name"))   # playbook + credit (stack)
         min_spread = costing.get_min_spread()
 
         def price(line, tier_weight=None):

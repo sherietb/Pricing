@@ -68,7 +68,15 @@ CREATE TABLE IF NOT EXISTS quotes (
     id INTEGER PRIMARY KEY AUTOINCREMENT, created_at TEXT, customer TEXT, quote_no TEXT,
     destination TEXT, adder_basis TEXT, use_inventory INTEGER, grand_total REAL, payload TEXT
 );
+CREATE TABLE IF NOT EXISTS customers (
+    name TEXT PRIMARY KEY, segment TEXT, playbook INTEGER, credit TEXT
+);
+CREATE TABLE IF NOT EXISTS cust_config (k TEXT PRIMARY KEY, v REAL);
 """
+
+# Customer pricing layers ($/cwt), tunable in Admin. Playbook 1/2/3 and credit High/Low.
+CUSTOMER_CONFIG = {"pb1_cwt": -2.0, "pb2_cwt": 0.0, "pb3_cwt": 2.0,
+                   "credit_high_cwt": 2.0, "credit_low_cwt": 0.0}
 
 
 def connect():
@@ -296,6 +304,107 @@ def delete_quote(qid):
     conn.commit()
     conn.close()
     return n
+
+
+# ---- customers ----------------------------------------------------------
+def get_cust_config():
+    conn = connect()
+    conn.executescript(SCHEMA)
+    have = {r["k"]: r["v"] for r in conn.execute("SELECT k, v FROM cust_config")}
+    for k, v in CUSTOMER_CONFIG.items():
+        if k not in have:
+            conn.execute("INSERT INTO cust_config VALUES (?,?)", (k, v))
+    conn.commit()
+    cfg = {r["k"]: r["v"] for r in conn.execute("SELECT k, v FROM cust_config")}
+    conn.close()
+    return {**CUSTOMER_CONFIG, **cfg}
+
+
+def set_cust_config(updates):
+    conn = connect()
+    conn.executescript(SCHEMA)
+    for k in CUSTOMER_CONFIG:
+        if k in updates and updates[k] is not None:
+            conn.execute("INSERT OR REPLACE INTO cust_config VALUES (?,?)", (k, float(updates[k])))
+    conn.commit()
+    conn.close()
+    return get_cust_config()
+
+
+def list_customers():
+    conn = connect()
+    conn.executescript(SCHEMA)
+    rows = [dict(r) for r in conn.execute("SELECT name, segment, playbook, credit FROM customers ORDER BY name")]
+    conn.close()
+    return rows
+
+
+def get_customer(name):
+    if not name:
+        return None
+    conn = connect()
+    conn.executescript(SCHEMA)
+    row = conn.execute("SELECT * FROM customers WHERE name=?", (name.strip(),)).fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def upsert_customer(name, segment=None, playbook=2, credit="low"):
+    name = (name or "").strip()
+    if not name:
+        raise ValueError("customer name required")
+    pb = int(playbook) if playbook in (1, 2, 3, "1", "2", "3") else 2
+    credit = "high" if str(credit).lower().startswith("h") else "low"
+    conn = connect()
+    conn.executescript(SCHEMA)
+    conn.execute("INSERT OR REPLACE INTO customers VALUES (?,?,?,?)",
+                 (name, (segment or "").strip(), pb, credit))
+    conn.commit()
+    conn.close()
+    return get_customer(name)
+
+
+def delete_customer(name):
+    conn = connect()
+    conn.executescript(SCHEMA)
+    n = conn.execute("DELETE FROM customers WHERE name=?", ((name or "").strip(),)).rowcount
+    conn.commit()
+    conn.close()
+    return n
+
+
+def customer_adjustments(name):
+    """List of {label, cwt} $/cwt layers for a customer's playbook + credit (stacks)."""
+    c = get_customer(name)
+    if not c:
+        return []
+    cfg = get_cust_config()
+    adjs = []
+    pb_amt = cfg.get("pb%d_cwt" % (c["playbook"] or 2), 0.0)
+    if pb_amt:
+        adjs.append({"label": "Playbook %d" % c["playbook"], "cwt": pb_amt})
+    if (c["credit"] or "low") == "high" and cfg.get("credit_high_cwt"):
+        adjs.append({"label": "Credit: High Risk", "cwt": cfg["credit_high_cwt"]})
+    return adjs
+
+
+def import_customers_csv(path=None):
+    """Bulk-load customers from a CSV with columns name, segment, playbook, credit."""
+    import csv
+    if path is None:
+        path = os.path.join(HERE, "Customers.csv")
+    if not os.path.exists(path):
+        raise FileNotFoundError(path)
+    n = 0
+    with open(path, newline="", encoding="utf-8-sig") as f:
+        for row in csv.DictReader(f):
+            row = {(k or "").strip().lower(): v for k, v in row.items()}
+            if not row.get("name"):
+                continue
+            upsert_customer(row.get("name"), row.get("segment"),
+                            row.get("playbook", 2), row.get("credit", "low"))
+            n += 1
+    return {"imported": n}
 
 
 if __name__ == "__main__":
