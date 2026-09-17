@@ -20,6 +20,26 @@
   .tabs button.active{color:var(--accent);border-bottom-color:var(--accent)}
   body.view-quote .dashonly{display:none !important}
   body.view-dash .quoteonly{display:none !important}
+  .filters{display:flex;flex-wrap:wrap;gap:12px;align-items:flex-end;background:#f8fafc;
+        border:1px solid var(--line);border-radius:10px;padding:12px 14px;margin-bottom:14px}
+  .filters .ff{display:flex;flex-direction:column;gap:3px}
+  .filters label{margin:0}
+  .filters select{width:auto;min-width:120px;padding:7px 9px}
+  .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:12px;margin-bottom:16px}
+  .kpi{background:linear-gradient(135deg,#f8fafc,#eef2ff);border:1px solid var(--line);
+        border-radius:12px;padding:14px 16px}
+  .kpi .lbl{font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);font-weight:600}
+  .kpi .val{font-size:23px;font-weight:750;color:var(--ink);margin-top:4px;line-height:1.1}
+  .kpi .sub{font-size:12px;color:var(--muted);margin-top:2px}
+  .charts{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  .chart{border:1px solid var(--line);border-radius:12px;padding:14px 16px;min-width:0;background:#fff}
+  .chart.wide{grid-column:1/-1}
+  .chart h3{font-size:12px;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);margin:0 0 10px}
+  .chart svg{display:block;width:100%;height:auto;overflow:visible}
+  .chart .barlabel{font-size:12px;fill:var(--ink)}
+  .chart .barval{font-size:11px;fill:var(--muted)}
+  .chart .axis{font-size:10px;fill:#94a3b8}
+  @media (max-width:720px){.charts{grid-template-columns:1fr}}
   .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:18px 20px;
         box-shadow:0 1px 2px rgba(15,23,42,.04)}
   .card h2{font-size:14px;text-transform:uppercase;letter-spacing:.6px;color:var(--muted);margin:0 0 14px}
@@ -174,33 +194,48 @@
   </div>
 
   <div class="card no-print dashonly">
-    <h2>Dashboard <span id="dashalert" class="pos short" style="display:none"></span></h2>
-    <div class="basis">
-      Bookings period:
-      <select id="dashdays" style="width:auto;padding:4px 8px">
-        <option value="30">30 days</option><option value="90" selected>90 days</option>
-        <option value="180">180 days</option><option value="365">1 year</option></select>
-      &nbsp;·&nbsp; Conversion alert if &gt; <input id="dashthresh" type="number" step="1" style="width:56px;padding:2px 4px">%
-      <button class="ghost" id="dashthreshsave">Set</button>
+    <h2>Bookings dashboard <span id="dashnote" class="sub2" style="font-weight:400;text-transform:none;letter-spacing:0"></span></h2>
+    <div class="filters">
+      <div class="ff"><label>Timeframe</label><select id="f_days">
+        <option value="30">Last 30 days</option><option value="90" selected>Last 90 days</option>
+        <option value="180">Last 180 days</option><option value="365">Last 12 months</option>
+        <option value="730">Last 24 months</option></select></div>
+      <div class="ff"><label>Outside rep (OSR)</label><select id="f_osr"><option value="">All</option></select></div>
+      <div class="ff"><label>Inside rep (ISR)</label><select id="f_isr"><option value="">All</option></select></div>
+      <div class="ff"><label>Warehouse</label><select id="f_whs"><option value="">All</option></select></div>
+      <div class="ff"><label>Product (form)</label><select id="f_form"><option value="">All</option></select></div>
+      <div class="ff"><label>&nbsp;</label><button class="ghost" id="f_reset">Reset</button></div>
     </div>
-    <div class="qmeta" id="dashtiles" style="margin-top:10px"></div>
-    <div class="grid" style="grid-template-columns:1fr 1fr;margin-top:6px">
-      <div><div class="sub2" style="font-weight:600;margin-bottom:4px">Monthly bookings ($)</div><table><tbody id="dashtrend"></tbody></table></div>
-      <div><div class="sub2" style="font-weight:600;margin-bottom:4px">Top customers (bookings $)</div><table><tbody id="dashtop"></tbody></table></div>
+    <div class="kpis" id="kpis"></div>
+    <div class="charts">
+      <div class="chart wide"><h3>Booked value by month</h3><div id="ch_trend"></div></div>
+      <div class="chart"><h3>By warehouse</h3><div id="ch_whs"></div></div>
+      <div class="chart"><h3>Product mix</h3><div id="ch_form"></div></div>
+      <div class="chart"><h3>By outside rep (OSR)</h3><div id="ch_osr"></div></div>
+      <div class="chart"><h3>By inside rep (ISR)</h3><div id="ch_isr"></div></div>
+      <div class="chart wide"><h3>OSR &times; warehouse — booked $ heatmap</h3><div id="ch_heat"></div></div>
+      <div class="chart wide"><h3>Top customers</h3><div id="ch_cust"></div></div>
     </div>
-    <div class="sub2" style="font-weight:600;margin:10px 0 4px">Quote conversion by region</div>
-    <table><thead><tr><th>Region</th><th class="num">Won</th><th class="num">Lost</th><th class="num">Open</th><th class="num">Rate</th></tr></thead><tbody id="dashregion"></tbody></table>
-    <div class="grid" style="grid-template-columns:1fr 1fr;margin-top:10px">
-      <div><div class="sub2" style="font-weight:600;margin-bottom:4px">Why we lose</div><table><tbody id="dashloss"></tbody></table></div>
-      <div><div class="sub2" style="font-weight:600;margin-bottom:4px">Competitor $/cwt cited (lost)</div>
-        <table><thead><tr><th>Region</th><th class="num">n</th><th class="num">Avg</th><th class="num">Low</th><th class="num">High</th></tr></thead><tbody id="dashcomp"></tbody></table></div>
-    </div>
-    <div class="sub2" style="font-weight:600;margin:12px 0 4px">Historical quotes (ERP) <span id="dashqhsum" class="sub2" style="font-weight:400"></span></div>
-    <div class="grid" style="grid-template-columns:1fr 1fr">
-      <div><div class="sub2" style="margin-bottom:4px">Quotes by salesperson</div><table><tbody id="dashqhrep"></tbody></table></div>
-      <div><div class="sub2" style="margin-bottom:4px">Most-quoted customers</div><table><tbody id="dashqhcust"></tbody></table></div>
-    </div>
-    <div class="sub2" id="dashnote" style="margin-top:6px"></div>
+    <details style="margin-top:16px">
+      <summary style="cursor:pointer;font-weight:600;color:var(--muted)">Quote pipeline &amp; ERP quote history</summary>
+      <div style="margin-top:12px">
+        <div class="basis">Conversion alert if &gt; <input id="dashthresh" type="number" step="1" style="width:56px;padding:2px 4px">%
+          <button class="ghost" id="dashthreshsave">Set</button>
+          <span id="dashalert" class="pos short" style="display:none"></span></div>
+        <div class="sub2" style="font-weight:600;margin:10px 0 4px">Quote conversion by region (app quotes)</div>
+        <table><thead><tr><th>Region</th><th class="num">Won</th><th class="num">Lost</th><th class="num">Open</th><th class="num">Rate</th></tr></thead><tbody id="dashregion"></tbody></table>
+        <div class="grid" style="grid-template-columns:1fr 1fr;margin-top:10px">
+          <div><div class="sub2" style="font-weight:600;margin-bottom:4px">Why we lose</div><table><tbody id="dashloss"></tbody></table></div>
+          <div><div class="sub2" style="font-weight:600;margin-bottom:4px">Competitor $/cwt cited (lost)</div>
+            <table><thead><tr><th>Region</th><th class="num">n</th><th class="num">Avg</th><th class="num">Low</th><th class="num">High</th></tr></thead><tbody id="dashcomp"></tbody></table></div>
+        </div>
+        <div class="sub2" style="font-weight:600;margin:12px 0 4px">Historical quotes (ERP) <span id="dashqhsum" class="sub2" style="font-weight:400"></span></div>
+        <div class="grid" style="grid-template-columns:1fr 1fr">
+          <div><div class="sub2" style="margin-bottom:4px">Quotes by salesperson</div><table><tbody id="dashqhrep"></tbody></table></div>
+          <div><div class="sub2" style="margin-bottom:4px">Most-quoted customers</div><table><tbody id="dashqhcust"></tbody></table></div>
+        </div>
+      </div>
+    </details>
   </div>
 
   <div class="card no-print quoteonly">
@@ -662,15 +697,103 @@ window.showTab=function(t){
   $("tab_dash").classList.toggle("active",t==="dash");
   if(t==="dash") loadDashboard();
 };
-function tile(label,val){return '<div><label>'+label+'</label><div style="font-size:18px;font-weight:700">'+val+'</div></div>';}
+// ---- SVG chart helpers (self-contained, no external libs) ----
+const PALETTE=['#1d4ed8','#0891b2','#059669','#d97706','#7c3aed','#dc2626','#0d9488','#ea580c','#0ea5e9','#65a30d'];
+function esc(s){return (s+"").replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));}
+function moneyK(n){n=+n||0;const a=Math.abs(n);
+  if(a>=1e9)return "$"+(n/1e9).toFixed(1)+"B";
+  if(a>=1e6)return "$"+(n/1e6).toFixed(1)+"M";
+  if(a>=1e3)return "$"+(n/1e3).toFixed(0)+"K";
+  return "$"+n.toFixed(0);}
+function barChart(data,opts){
+  opts=opts||{}; const color=opts.color||"#1d4ed8", fmt=opts.fmt||moneyK;
+  data=(data||[]).filter(d=>d.val>0);
+  if(!data.length) return '<div class="sub2">no data for this filter</div>';
+  const W=520,rowH=28,lw=145,pad=6,barMax=W-lw-72,max=Math.max.apply(0,data.map(d=>d.val))||1,H=data.length*rowH+pad*2;
+  let s='<svg viewBox="0 0 '+W+' '+H+'" preserveAspectRatio="xMinYMin meet">';
+  data.forEach((d,i)=>{const y=pad+i*rowH,bw=Math.max(2,barMax*d.val/max);
+    s+='<text class="barlabel" x="0" y="'+(y+rowH/2)+'" dominant-baseline="middle">'+esc((d.label||"").slice(0,24))+'</text>';
+    s+='<rect x="'+lw+'" y="'+(y+5)+'" width="'+bw.toFixed(1)+'" height="'+(rowH-12)+'" rx="3" fill="'+color+'"/>';
+    s+='<text class="barval" x="'+(lw+bw+6)+'" y="'+(y+rowH/2)+'" dominant-baseline="middle">'+fmt(d.val)+'</text>';});
+  return s+'</svg>';
+}
+function areaChart(data,opts){
+  opts=opts||{}; const color=opts.color||"#1d4ed8", fmt=opts.fmt||moneyK;
+  data=data||[]; if(!data.length) return '<div class="sub2">no data for this filter</div>';
+  const W=1000,H=240,pl=56,pr=16,pt=14,pb=34,max=Math.max.apply(0,data.map(d=>d.val))||1,n=data.length;
+  const x=i=>pl+(n<=1?(W-pl-pr)/2:(W-pl-pr)*i/(n-1)), y=v=>pt+(H-pt-pb)*(1-v/max);
+  const pts=data.map((d,i)=>[x(i),y(d.val)]);
+  const line=pts.map((p,i)=>(i?"L":"M")+p[0].toFixed(1)+" "+p[1].toFixed(1)).join(" ");
+  const area=line+" L "+x(n-1).toFixed(1)+" "+(H-pb)+" L "+x(0).toFixed(1)+" "+(H-pb)+" Z";
+  let g="";for(let k=0;k<=3;k++){const gv=max*k/3,gy=y(gv);
+    g+='<line x1="'+pl+'" y1="'+gy+'" x2="'+(W-pr)+'" y2="'+gy+'" stroke="#eef2f7"/>';
+    g+='<text class="axis" x="'+(pl-6)+'" y="'+(gy+3)+'" text-anchor="end">'+fmt(gv)+'</text>';}
+  const step=Math.max(1,Math.ceil(n/8));let xl="";
+  data.forEach((d,i)=>{if(i%step===0||i===n-1)xl+='<text class="axis" x="'+x(i)+'" y="'+(H-pb+16)+'" text-anchor="middle">'+esc((d.month||"").slice(2))+'</text>';});
+  return '<svg viewBox="0 0 '+W+' '+H+'" preserveAspectRatio="xMinYMin meet">'+g+
+    '<path d="'+area+'" fill="'+color+'22"/><path d="'+line+'" fill="none" stroke="'+color+'" stroke-width="2.5"/>'+
+    pts.map(p=>'<circle cx="'+p[0].toFixed(1)+'" cy="'+p[1].toFixed(1)+'" r="2.5" fill="'+color+'"/>').join("")+xl+'</svg>';
+}
+function donut(data){
+  data=(data||[]).filter(d=>d.val>0); if(!data.length) return '<div class="sub2">no data for this filter</div>';
+  if(data.length>7){const top=data.slice(0,6),other=data.slice(6).reduce((s,d)=>s+d.val,0);top.push({label:"Other",val:other});data=top;}
+  const tot=data.reduce((s,d)=>s+d.val,0)||1,cx=90,cy=90,r=72,rin=44;let a0=-Math.PI/2,arcs="";
+  data.forEach((d,i)=>{const frac=d.val/tot,a1=a0+frac*2*Math.PI,large=frac>0.5?1:0;
+    const x0=cx+r*Math.cos(a0),y0=cy+r*Math.sin(a0),x1=cx+r*Math.cos(a1),y1=cy+r*Math.sin(a1);
+    const xi0=cx+rin*Math.cos(a1),yi0=cy+rin*Math.sin(a1),xi1=cx+rin*Math.cos(a0),yi1=cy+rin*Math.sin(a0);
+    arcs+='<path d="M'+x0.toFixed(1)+' '+y0.toFixed(1)+' A'+r+' '+r+' 0 '+large+' 1 '+x1.toFixed(1)+' '+y1.toFixed(1)+
+      ' L'+xi0.toFixed(1)+' '+yi0.toFixed(1)+' A'+rin+' '+rin+' 0 '+large+' 0 '+xi1.toFixed(1)+' '+yi1.toFixed(1)+' Z" fill="'+PALETTE[i%PALETTE.length]+'"/>';
+    a0=a1;});
+  const leg=data.map((d,i)=>'<div style="display:flex;align-items:center;gap:6px;font-size:12px"><span style="width:10px;height:10px;border-radius:2px;background:'+PALETTE[i%PALETTE.length]+';flex:0 0 10px"></span>'+esc(d.label)+' <span class="sub2">'+(100*d.val/tot).toFixed(0)+'%</span></div>').join("");
+  return '<div style="display:flex;gap:16px;align-items:center;flex-wrap:wrap"><svg viewBox="0 0 180 180" style="width:150px;flex:0 0 150px">'+arcs+
+    '<text x="90" y="86" text-anchor="middle" style="font-size:11px;fill:#64748b">Total</text>'+
+    '<text x="90" y="104" text-anchor="middle" style="font-size:14px;font-weight:700;fill:#0f172a">'+moneyK(tot)+'</text></svg>'+
+    '<div style="display:grid;gap:5px">'+leg+'</div></div>';
+}
+function heatmap(rows,cols,matrix){
+  if(!rows||!rows.length||!cols||!cols.length) return '<div class="sub2">no data for this filter</div>';
+  const max=Math.max.apply(0,[1].concat(matrix.flat())),cw=Math.max(64,Math.min(130,Math.floor(760/cols.length))),ch=30,lw=150,top=20;
+  const W=lw+cols.length*cw+10,H=top+rows.length*ch+6;
+  let s='<svg viewBox="0 0 '+W+' '+H+'" preserveAspectRatio="xMinYMin meet">';
+  cols.forEach((c,j)=>s+='<text class="axis" x="'+(lw+j*cw+cw/2)+'" y="'+(top-6)+'" text-anchor="middle">'+esc(c)+'</text>');
+  rows.forEach((r,i)=>{s+='<text class="barlabel" x="0" y="'+(top+i*ch+ch/2)+'" dominant-baseline="middle">'+esc((r.label||"").slice(0,20))+'</text>';
+    cols.forEach((c,j)=>{const v=matrix[i][j]||0,t=v/max,bg="rgba(29,78,216,"+(0.08+0.85*t).toFixed(3)+")";
+      s+='<rect x="'+(lw+j*cw)+'" y="'+(top+i*ch+2)+'" width="'+(cw-3)+'" height="'+(ch-4)+'" rx="3" fill="'+(v?bg:"#f1f5f9")+'"/>';
+      if(v&&t>0.03)s+='<text x="'+(lw+j*cw+(cw-3)/2)+'" y="'+(top+i*ch+ch/2)+'" text-anchor="middle" dominant-baseline="middle" style="font-size:10px;fill:'+(t>0.5?"#fff":"#334155")+'">'+moneyK(v)+'</text>';});});
+  return s+'</svg>';
+}
+function renderKpis(k){
+  k=k||{};
+  const T=[["Booked value",moneyK(k.value)],["Weight",Math.round(k.weight||0).toLocaleString()+" lb"],
+    ["Orders",(k.orders||0).toLocaleString()],["Avg $/cwt",k.avg_cwt!=null?"$"+k.avg_cwt.toFixed(2):"—"],
+    ["Margin over metal",k.margin_pct!=null?k.margin_pct+"%":"—"]];
+  $("kpis").innerHTML=T.map(t=>'<div class="kpi"><div class="lbl">'+t[0]+'</div><div class="val">'+t[1]+'</div></div>').join("");
+}
+let FILTERS_LOADED=false;
+function fillSel(id,list){const el=$(id);if(!el)return;const cur=el.value;
+  el.innerHTML='<option value="">All</option>'+(list||[]).map(o=>'<option value="'+esc(o.key)+'">'+esc(o.label)+'</option>').join("");
+  el.value=cur;}
 async function loadDashboard(){
-  const days=$("dashdays")?$("dashdays").value:90;
-  let d; try{ d=await (await fetch("/api/dashboard?days="+days)).json(); }catch(e){ return; }
-  const c=d.conversion||{}, b=d.bookings;
-  $("dashtiles").innerHTML=(b?tile("Bookings ("+b.days+"d)",money(b.total_val))+tile("Weight",Math.round(b.total_wgt).toLocaleString()+" lb")+tile("Shipments",b.shipments.toLocaleString()):"")
-    +tile("Conversion",c.rate==null?"— (mark won/lost)":c.rate+"%");
-  $("dashtrend").innerHTML=((b&&b.trend)||[]).map(t=>"<tr><td>"+t.month+'</td><td class="num">'+money(t.val)+"</td></tr>").join("")||'<tr><td class="sub2">—</td></tr>';
-  $("dashtop").innerHTML=((b&&b.top_customers)||[]).map(t=>"<tr><td>"+t.name+(t.segment?' <span class="sub2">('+t.segment+")</span>":"")+'</td><td class="num">'+money(t.val)+"</td></tr>").join("")||'<tr><td class="sub2">—</td></tr>';
+  const p=new URLSearchParams({days:$("f_days").value,osr:$("f_osr").value,isr:$("f_isr").value,whs:$("f_whs").value,form:$("f_form").value});
+  let d; try{ d=await (await fetch("/api/dashboard?"+p.toString())).json(); }catch(e){ return; }
+  if(d.options&&!FILTERS_LOADED){fillSel("f_osr",d.options.osr);fillSel("f_isr",d.options.isr);fillSel("f_whs",d.options.whs);fillSel("f_form",d.options.form);FILTERS_LOADED=true;}
+  const s=d.sales;
+  if(s){
+    renderKpis(s.kpis);
+    $("ch_trend").innerHTML=areaChart(s.trend);
+    $("ch_whs").innerHTML=barChart(s.by_warehouse,{color:"#0891b2"});
+    $("ch_form").innerHTML=donut(s.by_form);
+    $("ch_osr").innerHTML=barChart(s.by_osr,{color:"#1d4ed8"});
+    $("ch_isr").innerHTML=barChart(s.by_isr,{color:"#7c3aed"});
+    $("ch_heat").innerHTML=heatmap(s.heatmap.rows,s.heatmap.cols,s.heatmap.matrix);
+    $("ch_cust").innerHTML=barChart(s.top_customers,{color:"#059669"});
+    $("dashnote").textContent="· "+moneyK(s.kpis.value)+" booked ("+s.kpis.orders.toLocaleString()+" orders)";
+  }else{
+    $("kpis").innerHTML='<div class="sub2">Sales data unavailable'+(d.sales_error?": "+d.sales_error:"")+'</div>';
+    ["ch_trend","ch_whs","ch_form","ch_osr","ch_isr","ch_heat","ch_cust"].forEach(i=>{if($(i))$(i).innerHTML="";});
+  }
+  // secondary: app-quote pipeline + ERP quote history
+  const c=d.conversion||{};
   $("dashregion").innerHTML=(c.by_region||[]).map(r=>"<tr><td>"+(r.region||"(none)")+'</td><td class="num">'+r.won+'</td><td class="num">'+r.lost+'</td><td class="num">'+r.open+'</td><td class="num">'+(r.rate==null?"—":r.rate+"%")+"</td></tr>").join("")||'<tr><td class="sub2">no quotes yet</td></tr>';
   const lf=d.loss_feedback||{};
   const RLABEL={price:"Price too high",lead_time:"Lead time",availability:"Availability",relationship:"Relationship / incumbent",no_bid:"No bid",other:"Other","(unspecified)":"(unspecified)"};
@@ -685,9 +808,9 @@ async function loadDashboard(){
   const al=$("dashalert");
   if(d.alert){al.style.display="";al.textContent="⚠ Conversion "+c.rate+"% > "+d.alert_pct+"%";} else al.style.display="none";
   if($("dashthresh")&&document.activeElement!==$("dashthresh")) $("dashthresh").value=d.alert_pct;
-  $("dashnote").textContent=b?"":("Bookings unavailable"+(d.bookings_error?": "+d.bookings_error:" (DB not reachable)"));
 }
-if($("dashdays")) $("dashdays").onchange=loadDashboard;
+["f_days","f_osr","f_isr","f_whs","f_form"].forEach(id=>{const el=$(id);if(el)el.onchange=loadDashboard;});
+if($("f_reset")) $("f_reset").onclick=()=>{["f_osr","f_isr","f_whs","f_form"].forEach(i=>$(i).value="");$("f_days").value="90";loadDashboard();};
 $("dashthreshsave").onclick=async()=>{
   await fetch("/api/dash-config",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({conv_alert_pct:parseFloat($("dashthresh").value)})});
   await loadDashboard();

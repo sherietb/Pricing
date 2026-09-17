@@ -65,11 +65,14 @@ class Handler(BaseHTTPRequestHandler):
         elif self.path == "/api/quotes":
             self._send(200, {"quotes": db.list_quotes()})
         elif self.path.startswith("/api/dashboard"):
-            days = 90
-            if "?" in self.path:
-                import urllib.parse
-                days = int(urllib.parse.parse_qs(self.path.split("?", 1)[1]).get("days", ["90"])[0])
-            self._send(200, db.dashboard(days))
+            import urllib.parse
+            q = urllib.parse.parse_qs(self.path.split("?", 1)[1]) if "?" in self.path else {}
+            def g(k):
+                v = q.get(k, [""])[0].strip()
+                return v or None
+            days = int(q.get("days", ["90"])[0] or 90)
+            self._send(200, db.dashboard(days, osr=g("osr"), isr=g("isr"),
+                                         whs=g("whs"), form=g("form")))
         elif self.path.startswith("/api/quotes/"):
             qid = self.path.rsplit("/", 1)[-1]
             q = db.get_quote(int(qid)) if qid.isdigit() else None

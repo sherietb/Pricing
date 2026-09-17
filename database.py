@@ -682,17 +682,131 @@ def erp_quote_history():
             "coverage_pct": round(100.0 * ordered / quoted, 0) if quoted else None}
 
 
-def dashboard(days=90):
+def salesperson_names():
+    """{slp code -> 'First Last'} derived from salesperson_emails (email local part)."""
+    import pyodbc
+    out = {}
+    try:
+        cn = pyodbc.connect(CUST_DB_CONN, timeout=15); cur = cn.cursor()
+        cur.execute("SELECT LTRIM(RTRIM(slp_slp)), usr_email FROM dbo.salesperson_emails "
+                    "WHERE slp_slp IS NOT NULL")
+        for code, email in cur.fetchall():
+            local = (email or "").split("@")[0]
+            parts = [p for p in local.replace("_", ".").split(".") if p]
+            out[code] = " ".join(p.capitalize() for p in parts) if parts else code
+        cn.close()
+    except Exception:
+        pass
+    return out
+
+
+SALES_TABLE = "dbo.salesforce_bookings_so"
+
+
+def _sales_where(days, osr, isr, whs, form):
+    where = ["order_dt >= DATEADD(day, ?, GETDATE())"]
+    params = [-abs(int(days or 90))]
+    for col, val in (("os_rep", osr), ("is_rep", isr), ("shp_whs", whs), ("form", form)):
+        if val:
+            where.append("LTRIM(RTRIM(%s)) = ?" % col)
+            params.append(str(val).strip())
+    return " AND ".join(where), params
+
+
+def sales_analytics(days=90, osr=None, isr=None, whs=None, form=None):
+    """Visual-dashboard aggregates from salesforce_bookings_so, honoring filters.
+    Margin is computed over costed rows only (booked_mtl_cost > 0)."""
+    import pyodbc
+    cn = pyodbc.connect(CUST_DB_CONN, timeout=60); cur = cn.cursor()
+    W, P = _sales_where(days, osr, isr, whs, form)
+    names = salesperson_names()
+
+    def rows(sql, extra=()):
+        cur.execute(sql, P + list(extra)); return cur.fetchall()
+
+    # KPIs
+    k = rows("SELECT SUM(booked_value), SUM(net_wgt), COUNT(DISTINCT so), "
+             "SUM(CASE WHEN booked_mtl_cost>0 THEN booked_value END), "
+             "SUM(CASE WHEN booked_mtl_cost>0 THEN booked_mtl_cost END) "
+             "FROM %s WHERE %s" % (SALES_TABLE, W))[0]
+    val, wgt, orders, cval, ccost = (float(k[0] or 0), float(k[1] or 0), int(k[2] or 0),
+                                     float(k[3] or 0), float(k[4] or 0))
+    kpis = {"value": val, "weight": wgt, "orders": orders,
+            "avg_cwt": round(val / (wgt / 100.0), 2) if wgt else None,
+            "margin_pct": round(100.0 * (cval - ccost) / cval, 1) if cval else None}
+
+    trend = [{"month": r[0], "val": float(r[1] or 0)} for r in rows(
+        "SELECT FORMAT(order_dt,'yyyy-MM') ym, SUM(booked_value) FROM %s WHERE %s "
+        "GROUP BY FORMAT(order_dt,'yyyy-MM') ORDER BY ym" % (SALES_TABLE, W))]
+
+    def dim(col, label_names=None, top=None):
+        top_sql = ("TOP %d " % top) if top else ""
+        rs = rows("SELECT %sLTRIM(RTRIM(%s)) k, SUM(booked_value) v FROM %s WHERE %s "
+                  "GROUP BY LTRIM(RTRIM(%s)) ORDER BY SUM(booked_value) DESC"
+                  % (top_sql, col, SALES_TABLE, W, col))
+        out = []
+        for k2, v in rs:
+            k2 = (k2 or "(none)")
+            lbl = label_names.get(k2, k2) if label_names else k2
+            out.append({"key": k2, "label": lbl, "val": float(v or 0)})
+        return out
+
+    by_whs = dim("shp_whs")
+    by_osr = dim("os_rep", names)
+    by_isr = dim("is_rep", names)
+    by_form = dim("form")
+    top_cust = dim("customer", top=10)
+
+    # heatmap: OSR (rows) x warehouse (cols) booked value
+    hm = rows("SELECT LTRIM(RTRIM(os_rep)) r, LTRIM(RTRIM(shp_whs)) c, SUM(booked_value) v "
+              "FROM %s WHERE %s GROUP BY LTRIM(RTRIM(os_rep)), LTRIM(RTRIM(shp_whs))" % (SALES_TABLE, W))
+    cn.close()
+    reps = [d["key"] for d in by_osr][:8]
+    cols = [d["key"] for d in by_whs][:6]
+    cell = {(r or "(none)", c or "(none)"): float(v or 0) for r, c, v in hm}
+    heat = {"rows": [{"key": r, "label": names.get(r, r)} for r in reps], "cols": cols,
+            "matrix": [[cell.get((r, c), 0.0) for c in cols] for r in reps]}
+
+    return {"kpis": kpis, "trend": trend, "by_warehouse": by_whs, "by_osr": by_osr,
+            "by_isr": by_isr, "by_form": by_form, "top_customers": top_cust, "heatmap": heat,
+            "filters": {"days": int(days or 90), "osr": osr, "isr": isr, "whs": whs, "form": form}}
+
+
+def sales_filter_options():
+    """Distinct OSR / ISR / warehouse / form values (last 365d) for the dashboard filters."""
+    import pyodbc
+    cn = pyodbc.connect(CUST_DB_CONN, timeout=40); cur = cn.cursor()
+    names = salesperson_names()
+    W = "order_dt >= DATEADD(day, -365, GETDATE())"
+
+    def opts(col, with_names=False):
+        cur.execute("SELECT LTRIM(RTRIM(%s)) k, SUM(booked_value) v FROM %s WHERE %s "
+                    "AND %s IS NOT NULL AND LTRIM(RTRIM(%s))<>'' "
+                    "GROUP BY LTRIM(RTRIM(%s)) ORDER BY SUM(booked_value) DESC"
+                    % (col, SALES_TABLE, W, col, col, col))
+        return [{"key": r[0], "label": (names.get(r[0], r[0]) if with_names else r[0])}
+                for r in cur.fetchall()]
+    out = {"osr": opts("os_rep", True), "isr": opts("is_rep", True),
+           "whs": opts("shp_whs"), "form": opts("form")}
+    cn.close()
+    return out
+
+
+def dashboard(days=90, osr=None, isr=None, whs=None, form=None):
     cfg = get_dash_config()
     conv = _quote_conversion()
     out = {"conversion": conv, "alert_pct": cfg["conv_alert_pct"],
            "alert": (conv["rate"] is not None and conv["rate"] > cfg["conv_alert_pct"]),
            "loss_feedback": _loss_feedback()}
     try:
-        out["bookings"] = _bookings(days)
+        out["sales"] = sales_analytics(days, osr, isr, whs, form)
     except Exception as exc:
-        out["bookings"] = None
-        out["bookings_error"] = str(exc)[:200]
+        out["sales"] = None
+        out["sales_error"] = str(exc)[:200]
+    try:
+        out["options"] = sales_filter_options()
+    except Exception as exc:
+        out["options"] = None
     try:
         out["quote_history"] = erp_quote_history()
     except Exception as exc:
