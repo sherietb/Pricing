@@ -195,6 +195,11 @@
       <div><div class="sub2" style="font-weight:600;margin-bottom:4px">Competitor $/cwt cited (lost)</div>
         <table><thead><tr><th>Region</th><th class="num">n</th><th class="num">Avg</th><th class="num">Low</th><th class="num">High</th></tr></thead><tbody id="dashcomp"></tbody></table></div>
     </div>
+    <div class="sub2" style="font-weight:600;margin:12px 0 4px">Historical quotes (ERP) <span id="dashqhsum" class="sub2" style="font-weight:400"></span></div>
+    <div class="grid" style="grid-template-columns:1fr 1fr">
+      <div><div class="sub2" style="margin-bottom:4px">Quotes by salesperson</div><table><tbody id="dashqhrep"></tbody></table></div>
+      <div><div class="sub2" style="margin-bottom:4px">Most-quoted customers</div><table><tbody id="dashqhcust"></tbody></table></div>
+    </div>
     <div class="sub2" id="dashnote" style="margin-top:6px"></div>
   </div>
 
@@ -671,6 +676,12 @@ async function loadDashboard(){
   const RLABEL={price:"Price too high",lead_time:"Lead time",availability:"Availability",relationship:"Relationship / incumbent",no_bid:"No bid",other:"Other","(unspecified)":"(unspecified)"};
   if($("dashloss")) $("dashloss").innerHTML=(lf.reasons||[]).map(r=>"<tr><td>"+(RLABEL[r.reason]||r.reason)+'</td><td class="num">'+r.n+"</td></tr>").join("")||'<tr><td class="sub2">no losses logged</td></tr>';
   if($("dashcomp")) $("dashcomp").innerHTML=(lf.competitor_by_region||[]).map(r=>"<tr><td>"+(r.region||"(none)")+'</td><td class="num">'+r.n+'</td><td class="num">$'+r.avg_comp+'</td><td class="num">$'+r.min_comp+'</td><td class="num">$'+r.max_comp+"</td></tr>").join("")||'<tr><td class="sub2">none cited</td></tr>';
+  const qh=d.quote_history;
+  if(qh){
+    $("dashqhsum").textContent="· "+qh.quotes.toLocaleString()+" quotes on file · "+(qh.coverage_pct!=null?qh.coverage_pct+"% of quoted customers also ordered":"");
+    $("dashqhrep").innerHTML=(qh.by_rep||[]).map(r=>"<tr><td>"+r.rep+'</td><td class="num">'+r.quotes.toLocaleString()+"</td></tr>").join("");
+    $("dashqhcust").innerHTML=(qh.by_customer||[]).map(r=>"<tr><td>"+r.name+'</td><td class="num">'+r.quotes.toLocaleString()+"</td></tr>").join("");
+  } else if($("dashqhsum")){ $("dashqhsum").textContent=d.quote_history_error?("· unavailable: "+d.quote_history_error):"· unavailable"; }
   const al=$("dashalert");
   if(d.alert){al.style.display="";al.textContent="⚠ Conversion "+c.rate+"% > "+d.alert_pct+"%";} else al.style.display="none";
   if($("dashthresh")&&document.activeElement!==$("dashthresh")) $("dashthresh").value=d.alert_pct;

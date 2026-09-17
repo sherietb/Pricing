@@ -612,6 +612,41 @@ def _bookings(days=90):
             "shipments": int(cnt or 0), "trend": trend, "top_customers": top}
 
 
+def erp_quote_history():
+    """Historical quotes from the ERP order file (ORTORH, prefix 'QT').
+    Volume by salesperson and customer, plus a coarse customer-level conversion
+    (share of quoted customers that also placed an order). NOTE: the extract has
+    no quoted price or reliable date, so this is volume/coverage, not a win-rate."""
+    import pyodbc
+    cn = pyodbc.connect(CUST_DB_CONN, timeout=40); cur = cn.cursor()
+    cur.execute("SELECT LTRIM(RTRIM(orh_ord_pfx)) pfx, COUNT(*) n FROM dbo.ORTORH "
+                "GROUP BY LTRIM(RTRIM(orh_ord_pfx))")
+    totals = {r[0]: int(r[1]) for r in cur.fetchall()}
+    cur.execute("SELECT TOP 12 LTRIM(RTRIM(orh_tkn_slp)) slp, COUNT(*) n FROM dbo.ORTORH "
+                "WHERE orh_ord_pfx='QT' GROUP BY LTRIM(RTRIM(orh_tkn_slp)) ORDER BY n DESC")
+    by_rep = [{"rep": r[0] or "(none)", "quotes": int(r[1])} for r in cur.fetchall()]
+    cur.execute("SELECT TOP 12 LTRIM(RTRIM(orh_sld_cus_id)) cid, COUNT(*) n FROM dbo.ORTORH "
+                "WHERE orh_ord_pfx='QT' GROUP BY LTRIM(RTRIM(orh_sld_cus_id)) ORDER BY n DESC")
+    top_rows = [(r[0], int(r[1])) for r in cur.fetchall()]
+    cur.execute("""SELECT COUNT(DISTINCT q.orh_sld_cus_id), COUNT(DISTINCT s.cid)
+        FROM (SELECT DISTINCT orh_sld_cus_id FROM dbo.ORTORH WHERE orh_ord_pfx='QT') q
+        LEFT JOIN (SELECT DISTINCT orh_sld_cus_id cid FROM dbo.ORTORH WHERE orh_ord_pfx='SO') s
+          ON s.cid=q.orh_sld_cus_id""")
+    quoted, ordered = cur.fetchone()
+    cn.close()
+    names = {}
+    try:
+        names = erp_name_map()
+    except Exception:
+        pass
+    by_customer = [{"name": names.get(cid, cid), "quotes": n} for cid, n in top_rows]
+    quoted, ordered = int(quoted or 0), int(ordered or 0)
+    return {"quotes": totals.get("QT", 0), "orders": totals.get("SO", 0),
+            "by_rep": by_rep, "by_customer": by_customer,
+            "customers_quoted": quoted, "customers_ordered": ordered,
+            "coverage_pct": round(100.0 * ordered / quoted, 0) if quoted else None}
+
+
 def dashboard(days=90):
     cfg = get_dash_config()
     conv = _quote_conversion()
@@ -623,6 +658,11 @@ def dashboard(days=90):
     except Exception as exc:
         out["bookings"] = None
         out["bookings_error"] = str(exc)[:200]
+    try:
+        out["quote_history"] = erp_quote_history()
+    except Exception as exc:
+        out["quote_history"] = None
+        out["quote_history_error"] = str(exc)[:200]
     return out
 
 
