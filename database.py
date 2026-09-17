@@ -735,9 +735,25 @@ def sales_analytics(days=90, osr=None, isr=None, whs=None, form=None):
             "avg_cwt": round(val / (wgt / 100.0), 2) if wgt else None,
             "margin_pct": round(100.0 * (cval - ccost) / cval, 1) if cval else None}
 
-    trend = [{"month": r[0], "val": float(r[1] or 0)} for r in rows(
-        "SELECT FORMAT(order_dt,'yyyy-MM') ym, SUM(booked_value) FROM %s WHERE %s "
-        "GROUP BY FORMAT(order_dt,'yyyy-MM') ORDER BY ym" % (SALES_TABLE, W))]
+    trend = []
+    for r in rows("SELECT FORMAT(order_dt,'yyyy-MM') ym, SUM(booked_value), SUM(net_wgt) FROM %s "
+                  "WHERE %s GROUP BY FORMAT(order_dt,'yyyy-MM') ORDER BY ym" % (SALES_TABLE, W)):
+        vm, wm = float(r[1] or 0), float(r[2] or 0)
+        trend.append({"month": r[0], "val": vm, "cwt": round(vm / (wm / 100.0), 2) if wm else None})
+
+    # margin % by outside rep (costed rows only), top 8 by booked value
+    margin_by_rep = []
+    for k, cval, ccost, tval in rows(
+            "SELECT TOP 8 LTRIM(RTRIM(os_rep)) k, "
+            "SUM(CASE WHEN booked_mtl_cost>0 THEN booked_value END), "
+            "SUM(CASE WHEN booked_mtl_cost>0 THEN booked_mtl_cost END), SUM(booked_value) "
+            "FROM %s WHERE %s GROUP BY LTRIM(RTRIM(os_rep)) ORDER BY SUM(booked_value) DESC"
+            % (SALES_TABLE, W)):
+        cv, cc = float(cval or 0), float(ccost or 0)
+        if cv <= 0:
+            continue
+        margin_by_rep.append({"key": (k or "(none)"), "label": names.get(k, k) or (k or "(none)"),
+                              "val": round(100.0 * (cv - cc) / cv, 1), "value": float(tval or 0)})
 
     def dim(col, label_names=None, top=None):
         top_sql = ("TOP %d " % top) if top else ""
@@ -769,6 +785,7 @@ def sales_analytics(days=90, osr=None, isr=None, whs=None, form=None):
 
     return {"kpis": kpis, "trend": trend, "by_warehouse": by_whs, "by_osr": by_osr,
             "by_isr": by_isr, "by_form": by_form, "top_customers": top_cust, "heatmap": heat,
+            "margin_by_rep": margin_by_rep,
             "filters": {"days": int(days or 90), "osr": osr, "isr": isr, "whs": whs, "form": form}}
 
 
