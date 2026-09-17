@@ -543,6 +543,17 @@ def _norm_name(s):
     return " ".join((s or "").upper().split())
 
 
+_NAME_SUFFIX = set("INC LLC CO CORP CORPORATION LP LTD LLP USA THE COMPANY "
+                   "INDUSTRIES IND MFG MANUFACTURING".split())
+
+
+def _aggr_tokens(s):
+    """Aggressively-normalized significant tokens: drop punctuation + corporate suffixes."""
+    import re
+    s = re.sub(r"[^A-Z0-9 ]", " ", (s or "").upper())
+    return [t for t in s.split() if t and t not in _NAME_SUFFIX]
+
+
 def erp_name_map():
     """{cus_id -> customer name} from the Salesforce-fed table (matches sahstn_rec.stn_sld_cus_id)."""
     import pyodbc
@@ -556,7 +567,10 @@ def erp_name_map():
 
 
 def erp_segment_map():
-    """Dominant dim_seg per customer, keyed by both cus_id and normalized name (salesforce_billings)."""
+    """Dominant dim_seg per customer from salesforce_billings.
+    Returns (by_id, resolve) where by_id maps cus_id -> segment and
+    resolve(name) -> segment using exact -> suffix-stripped -> safe token-subset
+    name matching (token-subset only when it points to a single segment)."""
     import pyodbc
     cn = pyodbc.connect(CUST_DB_CONN, timeout=30); cur = cn.cursor()
     cur.execute("""WITH x AS (
@@ -568,13 +582,34 @@ def erp_segment_map():
         WHERE dim_seg IS NOT NULL AND LTRIM(RTRIM(dim_seg)) <> '' AND cust_id IS NOT NULL
         GROUP BY LTRIM(RTRIM(cust_id)), LTRIM(RTRIM(customer)), LTRIM(RTRIM(dim_seg)))
         SELECT cid, nm, seg FROM x WHERE rn = 1""")
-    by_id, by_name = {}, {}
+    by_id, exact, aggr = {}, {}, {}
+    tok_index = []   # (set(tokens), seg)
     for cid, nm, seg in cur.fetchall():
         by_id[cid] = seg
-        if nm:
-            by_name[_norm_name(nm)] = seg
+        if not nm:
+            continue
+        exact.setdefault(_norm_name(nm), seg)
+        toks = _aggr_tokens(nm)
+        aggr.setdefault(" ".join(toks), seg)
+        if toks:
+            tok_index.append((set(toks), seg))
     cn.close()
-    return by_id, by_name
+
+    def resolve(name):
+        e = exact.get(_norm_name(name))
+        if e:
+            return e
+        toks = _aggr_tokens(name)
+        if not toks:
+            return None
+        a = aggr.get(" ".join(toks))
+        if a:
+            return a
+        mine = set(toks)
+        segs = {seg for tset, seg in tok_index if mine <= tset}   # our name fully inside theirs
+        return next(iter(segs)) if len(segs) == 1 else None
+
+    return by_id, resolve
 
 
 def _bookings(days=90):
@@ -690,9 +725,9 @@ def import_customers_from_db():
                    GROUP BY customer_name""")
     rows = cur.fetchall()
     cn.close()
-    seg_by_name = {}
+    resolve_seg = None
     try:
-        _, seg_by_name = erp_segment_map()   # normalized-name -> dim_seg
+        _, resolve_seg = erp_segment_map()   # resolve(name) -> dim_seg
     except Exception:
         pass
     existing = {c["name"]: c for c in list_customers()}   # also runs the dyn_cwt migration
@@ -705,7 +740,7 @@ def import_customers_from_db():
             continue
         credit = "high" if str(cs or "").strip().upper() == "H" else "low"
         ex = existing.get(name)
-        seg = seg_by_name.get(_norm_name(name))
+        seg = resolve_seg(name) if resolve_seg else None
         if seg:
             matched += 1
         else:                                 # keep any prior/admin segment if no ERP match
