@@ -419,6 +419,10 @@ def _ensure_quote_status():
     qcols = {r[1] for r in conn.execute("PRAGMA table_info(quotes)")}
     if "status" not in qcols:
         conn.execute("ALTER TABLE quotes ADD COLUMN status TEXT DEFAULT 'open'")
+    if "lost_reason" not in qcols:
+        conn.execute("ALTER TABLE quotes ADD COLUMN lost_reason TEXT")
+    if "competitor_cwt" not in qcols:
+        conn.execute("ALTER TABLE quotes ADD COLUMN competitor_cwt REAL")
     ccols = {r[1] for r in conn.execute("PRAGMA table_info(customers)")}
     if "dyn_cwt" not in ccols:
         conn.execute("ALTER TABLE customers ADD COLUMN dyn_cwt REAL DEFAULT 0")
@@ -445,15 +449,25 @@ def _apply_dynamic(name, outcome):
     conn.close()
 
 
-def set_quote_status(qid, status):
+LOSS_REASONS = ("price", "lead_time", "availability", "relationship", "no_bid", "other")
+
+
+def set_quote_status(qid, status, lost_reason=None, competitor_cwt=None):
     _ensure_quote_status()
     status = status if status in ("open", "won", "lost") else "open"
+    reason = lost_reason if (status == "lost" and lost_reason in LOSS_REASONS) else None
+    try:
+        comp = float(competitor_cwt) if (status == "lost" and competitor_cwt not in (None, "")) else None
+    except (TypeError, ValueError):
+        comp = None
     conn = connect()
     row = conn.execute("SELECT COALESCE(status,'open'), payload FROM quotes WHERE id=?", (qid,)).fetchone()
     if not row:
         conn.close(); return 0
     prior = row[0]
-    conn.execute("UPDATE quotes SET status=? WHERE id=?", (status, qid))
+    # Clear stale loss feedback when a quote moves off 'lost'.
+    conn.execute("UPDATE quotes SET status=?, lost_reason=?, competitor_cwt=? WHERE id=?",
+                 (status, reason, comp, qid))
     conn.commit()
     conn.close()
     if status != prior and status in ("won", "lost"):   # only on a real transition
@@ -507,8 +521,65 @@ def _quote_conversion():
             "rate": rate(tot["won"], tot["lost"]), "by_region": regions}
 
 
+def _loss_feedback():
+    """Why the app's saved quotes were lost, and competitor $/cwt reps cited (beta learning)."""
+    _ensure_quote_status()
+    conn = connect()
+    reasons = [dict(r) for r in conn.execute(
+        "SELECT COALESCE(lost_reason,'(unspecified)') reason, COUNT(*) n "
+        "FROM quotes WHERE status='lost' GROUP BY COALESCE(lost_reason,'(unspecified)') "
+        "ORDER BY n DESC")]
+    comp = [dict(r) for r in conn.execute(
+        "SELECT COALESCE(destination,'(none)') region, COUNT(*) n, "
+        "ROUND(AVG(competitor_cwt),2) avg_comp, ROUND(MIN(competitor_cwt),2) min_comp, "
+        "ROUND(MAX(competitor_cwt),2) max_comp "
+        "FROM quotes WHERE status='lost' AND competitor_cwt IS NOT NULL "
+        "GROUP BY COALESCE(destination,'(none)') ORDER BY n DESC")]
+    conn.close()
+    return {"reasons": reasons, "competitor_by_region": comp}
+
+
+def _norm_name(s):
+    return " ".join((s or "").upper().split())
+
+
+def erp_name_map():
+    """{cus_id -> customer name} from the Salesforce-fed table (matches sahstn_rec.stn_sld_cus_id)."""
+    import pyodbc
+    cn = pyodbc.connect(CUST_DB_CONN, timeout=20); cur = cn.cursor()
+    cur.execute("SELECT LTRIM(RTRIM(bka_sld_cus_id)) cid, MAX(LTRIM(RTRIM(customer))) nm "
+                "FROM dbo.salesforce_sales_numbers WHERE customer IS NOT NULL "
+                "GROUP BY LTRIM(RTRIM(bka_sld_cus_id))")
+    m = {r[0]: r[1] for r in cur.fetchall()}
+    cn.close()
+    return m
+
+
+def erp_segment_map():
+    """Dominant dim_seg per customer, keyed by both cus_id and normalized name (salesforce_billings)."""
+    import pyodbc
+    cn = pyodbc.connect(CUST_DB_CONN, timeout=30); cur = cn.cursor()
+    cur.execute("""WITH x AS (
+        SELECT LTRIM(RTRIM(cust_id)) cid, LTRIM(RTRIM(customer)) nm, LTRIM(RTRIM(dim_seg)) seg,
+               COUNT(*) n,
+               ROW_NUMBER() OVER (PARTITION BY LTRIM(RTRIM(cust_id))
+                                  ORDER BY COUNT(*) DESC) rn
+        FROM dbo.salesforce_billings
+        WHERE dim_seg IS NOT NULL AND LTRIM(RTRIM(dim_seg)) <> '' AND cust_id IS NOT NULL
+        GROUP BY LTRIM(RTRIM(cust_id)), LTRIM(RTRIM(customer)), LTRIM(RTRIM(dim_seg)))
+        SELECT cid, nm, seg FROM x WHERE rn = 1""")
+    by_id, by_name = {}, {}
+    for cid, nm, seg in cur.fetchall():
+        by_id[cid] = seg
+        if nm:
+            by_name[_norm_name(nm)] = seg
+    cn.close()
+    return by_id, by_name
+
+
 def _bookings(days=90):
-    """Bookings from the ERP sales history (sahstn_rec), names via transports.customerno."""
+    """Bookings from the ERP sales history (sahstn_rec); names via salesforce_sales_numbers,
+    segment via salesforce_billings.dim_seg."""
     import pyodbc
     cn = pyodbc.connect(BOOKINGS_DB_CONN, timeout=30)
     cur = cn.cursor()
@@ -524,18 +595,19 @@ def _bookings(days=90):
                 "GROUP BY LTRIM(RTRIM(stn_sld_cus_id)) ORDER BY SUM(stn_tot_val) DESC", -abs(days))
     top = [{"cid": r[0], "val": float(r[1] or 0), "wgt": float(r[2] or 0)} for r in cur.fetchall()]
     cn.close()
-    # names from Planning.transports (customerno -> customer_name)
-    names = {}
+    # names via salesforce_sales_numbers, segment via salesforce_billings.dim_seg
+    names, seg_by_id = {}, {}
     try:
-        cn2 = pyodbc.connect(CUST_DB_CONN, timeout=15); cur2 = cn2.cursor()
-        cur2.execute("SELECT LTRIM(RTRIM(customerno)) cid, MAX(customer_name) FROM dbo.transports "
-                     "WHERE customerno IS NOT NULL GROUP BY LTRIM(RTRIM(customerno))")
-        names = {r[0]: r[1] for r in cur2.fetchall()}
-        cn2.close()
+        names = erp_name_map()
+    except Exception:
+        pass
+    try:
+        seg_by_id, _ = erp_segment_map()
     except Exception:
         pass
     for t in top:
         t["name"] = names.get(t["cid"], t["cid"])
+        t["segment"] = seg_by_id.get(t["cid"], "")
     return {"days": days, "total_val": float(val or 0), "total_wgt": float(wgt or 0),
             "shipments": int(cnt or 0), "trend": trend, "top_customers": top}
 
@@ -544,7 +616,8 @@ def dashboard(days=90):
     cfg = get_dash_config()
     conv = _quote_conversion()
     out = {"conversion": conv, "alert_pct": cfg["conv_alert_pct"],
-           "alert": (conv["rate"] is not None and conv["rate"] > cfg["conv_alert_pct"])}
+           "alert": (conv["rate"] is not None and conv["rate"] > cfg["conv_alert_pct"]),
+           "loss_feedback": _loss_feedback()}
     try:
         out["bookings"] = _bookings(days)
     except Exception as exc:
@@ -564,9 +637,10 @@ def customers_db_available():
 
 
 def import_customers_from_db():
-    """Pull active customers + credit status live from the ERP (Planning.dbo.transports).
+    """Pull active customers + credit status live from the ERP (Planning.dbo.transports),
+    plus segment from salesforce_billings.dim_seg (matched on customer name).
     Credit code 'H' (hold) -> high risk, else low. Preserves each customer's
-    admin-assigned playbook/segment (those aren't in the ERP)."""
+    admin-assigned playbook and their earned dynamic margin."""
     import pyodbc
     cn = pyodbc.connect(CUST_DB_CONN, timeout=20)
     cur = cn.cursor()
@@ -576,25 +650,35 @@ def import_customers_from_db():
                    GROUP BY customer_name""")
     rows = cur.fetchall()
     cn.close()
+    seg_by_name = {}
+    try:
+        _, seg_by_name = erp_segment_map()   # normalized-name -> dim_seg
+    except Exception:
+        pass
     existing = {c["name"]: c for c in list_customers()}   # also runs the dyn_cwt migration
     conn = connect()
     conn.executescript(SCHEMA)
-    n = 0
+    n = matched = 0
     for name, cs in rows:
         name = (name or "").strip()
         if not name:
             continue
         credit = "high" if str(cs or "").strip().upper() == "H" else "low"
         ex = existing.get(name)
+        seg = seg_by_name.get(_norm_name(name))
+        if seg:
+            matched += 1
+        else:                                 # keep any prior/admin segment if no ERP match
+            seg = ex["segment"] if ex else ""
         # ON CONFLICT preserves each customer's dyn_cwt (their earned margin history).
         conn.execute(
             "INSERT INTO customers (name, segment, playbook, credit) VALUES (?,?,?,?) "
-            "ON CONFLICT(name) DO UPDATE SET credit=excluded.credit",
-            (name, ex["segment"] if ex else "", ex["playbook"] if ex else 2, credit))
+            "ON CONFLICT(name) DO UPDATE SET credit=excluded.credit, segment=excluded.segment",
+            (name, seg, ex["playbook"] if ex else 2, credit))
         n += 1
     conn.commit()
     conn.close()
-    return {"imported": n}
+    return {"imported": n, "segmented": matched}
 
 
 def import_customers_csv(path=None):

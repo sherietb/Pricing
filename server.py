@@ -132,8 +132,10 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(200, {"dash_config": db.set_dash_config(self._read_json())})
             elif self.path.startswith("/api/quotes/") and self.path.endswith("/status"):
                 qid = self.path.split("/")[3]
-                st = self._read_json().get("status")
-                self._send(200, {"updated": db.set_quote_status(int(qid), st) if qid.isdigit() else 0})
+                pl = self._read_json()
+                self._send(200, {"updated": db.set_quote_status(
+                    int(qid), pl.get("status"), pl.get("lost_reason"),
+                    pl.get("competitor_cwt")) if qid.isdigit() else 0})
             elif self.path == "/api/quotes":
                 pl = self._read_json()
                 qid = db.save_quote(pl.get("customer"), pl.get("quote_no"),

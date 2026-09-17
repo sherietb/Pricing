@@ -13,6 +13,13 @@
   header h1{font-size:18px;margin:0;font-weight:650;letter-spacing:.3px}
   header .sub{color:#94a3b8;font-size:13px}
   main{max-width:960px;margin:22px auto;padding:0 18px;display:grid;gap:18px}
+  .tabs{display:flex;gap:2px;border-bottom:1px solid var(--line);margin-bottom:-4px}
+  .tabs button{background:none;border:none;border-bottom:2px solid transparent;border-radius:0;
+        padding:10px 18px;font-size:14px;font-weight:600;color:var(--muted)}
+  .tabs button:hover{color:var(--ink)}
+  .tabs button.active{color:var(--accent);border-bottom-color:var(--accent)}
+  body.view-quote .dashonly{display:none !important}
+  body.view-dash .quoteonly{display:none !important}
   .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:18px 20px;
         box-shadow:0 1px 2px rgba(15,23,42,.04)}
   .card h2{font-size:14px;text-transform:uppercase;letter-spacing:.6px;color:var(--muted);margin:0 0 14px}
@@ -69,13 +76,17 @@
   }
 </style>
 </head>
-<body>
+<body class="view-quote">
 <header>
   <h1>WILLBANKS &mdash; Quote Pricing</h1>
   <span class="sub" id="meta"></span>
 </header>
 <main>
-  <div class="card no-print">
+  <div class="tabs no-print">
+    <button id="tab_quote" class="active" onclick="showTab('quote')">Quote</button>
+    <button id="tab_dash" onclick="showTab('dash')">Dashboard</button>
+  </div>
+  <div class="card no-print quoteonly">
     <h2>Enter what you&rsquo;re quoting</h2>
     <div class="grid">
       <div><label>Thickness</label><select id="thickness"></select></div>
@@ -103,7 +114,7 @@
     </div>
   </div>
 
-  <div class="card">
+  <div class="card quoteonly">
     <div class="printhead">
       <h1>WILLBANKS METALS &mdash; Quote</h1>
       <div id="printinfo" class="sub2"></div>
@@ -162,7 +173,7 @@
     </div>
   </div>
 
-  <div class="card no-print">
+  <div class="card no-print dashonly">
     <h2>Dashboard <span id="dashalert" class="pos short" style="display:none"></span></h2>
     <div class="basis">
       Bookings period:
@@ -179,10 +190,15 @@
     </div>
     <div class="sub2" style="font-weight:600;margin:10px 0 4px">Quote conversion by region</div>
     <table><thead><tr><th>Region</th><th class="num">Won</th><th class="num">Lost</th><th class="num">Open</th><th class="num">Rate</th></tr></thead><tbody id="dashregion"></tbody></table>
+    <div class="grid" style="grid-template-columns:1fr 1fr;margin-top:10px">
+      <div><div class="sub2" style="font-weight:600;margin-bottom:4px">Why we lose</div><table><tbody id="dashloss"></tbody></table></div>
+      <div><div class="sub2" style="font-weight:600;margin-bottom:4px">Competitor $/cwt cited (lost)</div>
+        <table><thead><tr><th>Region</th><th class="num">n</th><th class="num">Avg</th><th class="num">Low</th><th class="num">High</th></tr></thead><tbody id="dashcomp"></tbody></table></div>
+    </div>
     <div class="sub2" id="dashnote" style="margin-top:6px"></div>
   </div>
 
-  <div class="card no-print">
+  <div class="card no-print quoteonly">
     <h2>Saved quotes</h2>
     <table id="savedtable">
       <thead><tr><th>Date</th><th>Customer / job</th><th>Quote #</th><th>Region</th>
@@ -191,7 +207,7 @@
     </table>
     <div class="muted" id="savedempty">No saved quotes yet.</div>
   </div>
-  <div class="card no-print">
+  <div class="card no-print quoteonly">
     <h2>Import a quote request <span class="muted" style="text-transform:none;font-weight:400">(coming soon)</span></h2>
     <div class="intake">
       Paste an email, or drop a PDF / Excel here &mdash; specs will be auto-extracted into quote lines.<br>
@@ -199,7 +215,7 @@
     </div>
   </div>
 
-  <div class="card no-print">
+  <div class="card no-print quoteonly">
     <details class="admin">
       <summary>Admin</summary>
       <div style="margin-top:14px" class="grid">
@@ -281,6 +297,27 @@
     </details>
   </div>
 </main>
+<div id="lossmodal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:50;align-items:center;justify-content:center">
+  <div class="card" style="max-width:380px;width:90%;margin:0">
+    <h2 style="margin-top:0">Mark quote lost</h2>
+    <div class="sub2" style="margin-bottom:10px">Why did we lose it? Optional competitor price helps tune pricing.</div>
+    <label>Reason</label>
+    <select id="loss_reason">
+      <option value="price">Price too high</option>
+      <option value="lead_time">Lead time</option>
+      <option value="availability">Availability / no material</option>
+      <option value="relationship">Relationship / incumbent</option>
+      <option value="no_bid">No bid / didn't quote back</option>
+      <option value="other">Other</option>
+    </select>
+    <label style="margin-top:8px">Competitor $/cwt (optional)</label>
+    <input id="loss_comp" type="number" step="0.25" placeholder="e.g. 62.50">
+    <div style="display:flex;gap:8px;margin-top:14px;justify-content:flex-end">
+      <button class="ghost" id="loss_cancel">Cancel</button>
+      <button class="primary" id="loss_confirm">Mark lost</button>
+    </div>
+  </div>
+</div>
 <script>
 let DATA={products:[],extras:[]};
 const $=id=>document.getElementById(id);
@@ -599,8 +636,26 @@ async function loadSaved(){
     '<button class="ghost" onclick="removeQuote('+q.id+')">✕</button></td></tr>';}).join("");
 }
 window.setStatus=async(id,st)=>{
+  if(st==="lost"){ openLoss(id); return; }   // capture reason + competitor price first
   await fetch("/api/quotes/"+id+"/status",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({status:st})});
   await loadSaved(); await loadDashboard();
+};
+let LOSS_ID=null;
+function openLoss(id){ LOSS_ID=id; $("loss_comp").value=""; $("loss_reason").value="price"; $("lossmodal").style.display="flex"; }
+function closeLoss(){ LOSS_ID=null; $("lossmodal").style.display="none"; }
+$("loss_cancel").onclick=closeLoss;
+$("loss_confirm").onclick=async()=>{
+  const id=LOSS_ID; if(id==null) return;
+  const body={status:"lost",lost_reason:$("loss_reason").value,competitor_cwt:$("loss_comp").value||null};
+  closeLoss();
+  await fetch("/api/quotes/"+id+"/status",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
+  await loadSaved(); await loadDashboard();
+};
+window.showTab=function(t){
+  document.body.className="view-"+t;
+  $("tab_quote").classList.toggle("active",t==="quote");
+  $("tab_dash").classList.toggle("active",t==="dash");
+  if(t==="dash") loadDashboard();
 };
 function tile(label,val){return '<div><label>'+label+'</label><div style="font-size:18px;font-weight:700">'+val+'</div></div>';}
 async function loadDashboard(){
@@ -610,8 +665,12 @@ async function loadDashboard(){
   $("dashtiles").innerHTML=(b?tile("Bookings ("+b.days+"d)",money(b.total_val))+tile("Weight",Math.round(b.total_wgt).toLocaleString()+" lb")+tile("Shipments",b.shipments.toLocaleString()):"")
     +tile("Conversion",c.rate==null?"— (mark won/lost)":c.rate+"%");
   $("dashtrend").innerHTML=((b&&b.trend)||[]).map(t=>"<tr><td>"+t.month+'</td><td class="num">'+money(t.val)+"</td></tr>").join("")||'<tr><td class="sub2">—</td></tr>';
-  $("dashtop").innerHTML=((b&&b.top_customers)||[]).map(t=>"<tr><td>"+t.name+'</td><td class="num">'+money(t.val)+"</td></tr>").join("")||'<tr><td class="sub2">—</td></tr>';
+  $("dashtop").innerHTML=((b&&b.top_customers)||[]).map(t=>"<tr><td>"+t.name+(t.segment?' <span class="sub2">('+t.segment+")</span>":"")+'</td><td class="num">'+money(t.val)+"</td></tr>").join("")||'<tr><td class="sub2">—</td></tr>';
   $("dashregion").innerHTML=(c.by_region||[]).map(r=>"<tr><td>"+(r.region||"(none)")+'</td><td class="num">'+r.won+'</td><td class="num">'+r.lost+'</td><td class="num">'+r.open+'</td><td class="num">'+(r.rate==null?"—":r.rate+"%")+"</td></tr>").join("")||'<tr><td class="sub2">no quotes yet</td></tr>';
+  const lf=d.loss_feedback||{};
+  const RLABEL={price:"Price too high",lead_time:"Lead time",availability:"Availability",relationship:"Relationship / incumbent",no_bid:"No bid",other:"Other","(unspecified)":"(unspecified)"};
+  if($("dashloss")) $("dashloss").innerHTML=(lf.reasons||[]).map(r=>"<tr><td>"+(RLABEL[r.reason]||r.reason)+'</td><td class="num">'+r.n+"</td></tr>").join("")||'<tr><td class="sub2">no losses logged</td></tr>';
+  if($("dashcomp")) $("dashcomp").innerHTML=(lf.competitor_by_region||[]).map(r=>"<tr><td>"+(r.region||"(none)")+'</td><td class="num">'+r.n+'</td><td class="num">$'+r.avg_comp+'</td><td class="num">$'+r.min_comp+'</td><td class="num">$'+r.max_comp+"</td></tr>").join("")||'<tr><td class="sub2">none cited</td></tr>';
   const al=$("dashalert");
   if(d.alert){al.style.display="";al.textContent="⚠ Conversion "+c.rate+"% > "+d.alert_pct+"%";} else al.style.display="none";
   if($("dashthresh")&&document.activeElement!==$("dashthresh")) $("dashthresh").value=d.alert_pct;
