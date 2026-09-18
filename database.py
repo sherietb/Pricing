@@ -668,22 +668,46 @@ def erp_quote_history():
         LEFT JOIN (SELECT DISTINCT orh_sld_cus_id cid FROM dbo.ORTORH WHERE orh_ord_pfx='SO') s
           ON s.cid=q.orh_sld_cus_id""")
     quoted, ordered = cur.fetchone()
+    # win-rate proxy per quoting rep: of the customers a rep quoted (QT),
+    # what share also placed an order (SO, any rep). Top 10 reps by quoted customers.
+    cur.execute("""SELECT TOP 10 q.slp,
+            COUNT(DISTINCT q.cid) quoted,
+            COUNT(DISTINCT CASE WHEN s.cid IS NOT NULL THEN q.cid END) ordered
+        FROM (SELECT DISTINCT LTRIM(RTRIM(orh_tkn_slp)) slp, LTRIM(RTRIM(orh_sld_cus_id)) cid
+              FROM dbo.ORTORH WHERE orh_ord_pfx='QT') q
+        LEFT JOIN (SELECT DISTINCT LTRIM(RTRIM(orh_sld_cus_id)) cid
+                   FROM dbo.ORTORH WHERE orh_ord_pfx='SO') s ON s.cid=q.cid
+        GROUP BY q.slp ORDER BY COUNT(DISTINCT q.cid) DESC""")
+    wr_rows = [(r[0], int(r[1] or 0), int(r[2] or 0)) for r in cur.fetchall()]
     cn.close()
     names = {}
     try:
         names = erp_name_map()
     except Exception:
         pass
+    slp = salesperson_names()
     by_customer = [{"name": names.get(cid, cid), "quotes": n} for cid, n in top_rows]
+    winrate_by_rep = [{"key": (code or "(none)"), "label": slp.get(code, code) or "(none)",
+                       "quoted": q, "ordered": o,
+                       "rate": round(100.0 * o / q, 1) if q else 0.0}
+                      for code, q, o in wr_rows if code]
     quoted, ordered = int(quoted or 0), int(ordered or 0)
     return {"quotes": totals.get("QT", 0), "orders": totals.get("SO", 0),
-            "by_rep": by_rep, "by_customer": by_customer,
+            "by_rep": by_rep, "by_customer": by_customer, "winrate_by_rep": winrate_by_rep,
             "customers_quoted": quoted, "customers_ordered": ordered,
             "coverage_pct": round(100.0 * ordered / quoted, 0) if quoted else None}
 
 
+# Salesperson codes with no name in salesperson_emails/scrslp_rec. Fill in the
+# real names here (code -> "First Last") and they will show across the dashboard.
+SLP_NAME_OVERRIDES = {
+    # "HF": "", "JTO": "", "KJ": "",
+}
+
+
 def salesperson_names():
-    """{slp code -> 'First Last'} derived from salesperson_emails (email local part)."""
+    """{slp code -> 'First Last'} from salesperson_emails (email local part),
+    with SLP_NAME_OVERRIDES applied for codes the ERP has no name for."""
     import pyodbc
     out = {}
     try:
@@ -697,6 +721,9 @@ def salesperson_names():
         cn.close()
     except Exception:
         pass
+    for code, name in SLP_NAME_OVERRIDES.items():
+        if name:
+            out[code] = name
     return out
 
 
@@ -736,10 +763,16 @@ def sales_analytics(days=90, osr=None, isr=None, whs=None, form=None):
             "margin_pct": round(100.0 * (cval - ccost) / cval, 1) if cval else None}
 
     trend = []
-    for r in rows("SELECT FORMAT(order_dt,'yyyy-MM') ym, SUM(booked_value), SUM(net_wgt) FROM %s "
-                  "WHERE %s GROUP BY FORMAT(order_dt,'yyyy-MM') ORDER BY ym" % (SALES_TABLE, W)):
+    for r in rows("SELECT FORMAT(order_dt,'yyyy-MM') ym, SUM(booked_value), SUM(net_wgt), "
+                  "SUM(CASE WHEN booked_mtl_cost>0 THEN booked_value END), "
+                  "SUM(CASE WHEN booked_mtl_cost>0 THEN booked_mtl_cost END), "
+                  "SUM(CASE WHEN booked_mtl_cost>0 THEN net_wgt END) "
+                  "FROM %s WHERE %s GROUP BY FORMAT(order_dt,'yyyy-MM') ORDER BY ym" % (SALES_TABLE, W)):
         vm, wm = float(r[1] or 0), float(r[2] or 0)
-        trend.append({"month": r[0], "val": vm, "cwt": round(vm / (wm / 100.0), 2) if wm else None})
+        cvm, ccm, cwm = float(r[3] or 0), float(r[4] or 0), float(r[5] or 0)
+        trend.append({"month": r[0], "val": vm,
+                      "cwt": round(vm / (wm / 100.0), 2) if wm else None,
+                      "spread_cwt": round((cvm - ccm) / (cwm / 100.0), 2) if cwm else None})
 
     # margin % by outside rep (costed rows only), top 8 by booked value
     margin_by_rep = []
