@@ -38,14 +38,14 @@ DEFAULT_WORKBOOK = latest_pricing_workbook()
 # Regions each carry a FREIGHT $/cwt and a COMPETITIVE $/cwt. On a quote the rep applies
 # freight only, competitive only, or both (they stack). freight_cwt = pass-through cost
 # (excluded from CRU Spread); comp_cwt = a price move (counts toward margin).
-# NOTE: DFW / East TX / Houston-South TX freight and ALL comp_cwt are PLACEHOLDERS - confirm.
+# NOTE: freight_cwt values are PLACEHOLDERS - confirm. comp_cwt confirmed by CCO 2026-09-18.
 REGIONS = [
     {"region": "DFW",              "freight_cwt": 0.75, "comp_cwt": 0.00},
-    {"region": "East TX",          "freight_cwt": 1.25, "comp_cwt": 0.00},
-    {"region": "OKC",              "freight_cwt": 1.70, "comp_cwt": 0.00},
-    {"region": "Tulsa",            "freight_cwt": 2.05, "comp_cwt": 0.00},
-    {"region": "Houston/South TX", "freight_cwt": 2.00, "comp_cwt": 0.00},
-    {"region": "West TX",          "freight_cwt": 2.55, "comp_cwt": 0.00},
+    {"region": "East TX",          "freight_cwt": 1.25, "comp_cwt": -1.00},
+    {"region": "OKC",              "freight_cwt": 1.70, "comp_cwt": 2.00},
+    {"region": "Tulsa",            "freight_cwt": 2.05, "comp_cwt": 3.00},
+    {"region": "Houston/South TX", "freight_cwt": 2.00, "comp_cwt": -2.00},
+    {"region": "West TX",          "freight_cwt": 2.55, "comp_cwt": 2.00},
 ]
 
 SCHEMA = """
