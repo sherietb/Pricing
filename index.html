@@ -446,8 +446,11 @@ function showCustNote(){
 }
 function applyCustomerRegion(){
   // auto-set the region from the selected customer's ship-to (rep can still override)
-  const c=(DATA.customers||[]).find(x=>x.name===$("custselect").value);
-  const d=$("dest"); if(!c||!c.region||!d) return;
+  const d=$("dest"); if(!d) return;
+  const v=$("custselect").value;
+  if(v==="Prospect"){ d.value=""; if($("destnote")) $("destnote").textContent="prospect — defaulted to Local / pickup"; return; }
+  const c=(DATA.customers||[]).find(x=>x.name===v);
+  if(!c||!c.region) return;
   if([...d.options].some(o=>o.value===c.region)){
     d.value=c.region;
     if($("destnote")) $("destnote").textContent="auto-set from "+c.name+"’s ship-to";
@@ -469,17 +472,19 @@ function fillThickness(){
 }
 // Normalize a typed spec so "1-1/2", "1-1/2\"", "1 1/2" all match the stored "1-1/2\"".
 function normField(s){ return String(s==null?"":s).toLowerCase().replace(/["\s-]/g,""); }
+// Thickness also drops the slash, so the shorthand "114" matches 1-1/4" and "112" matches 1-1/2".
+function normThick(s){ return normField(s).replace(/\//g,""); }
 function fillGrade(){
-  const t=normField($("thickness").value);
-  let base=DATA.products.filter(p=>normField(p.thickness)===t);
+  const t=normThick($("thickness").value);
+  let base=DATA.products.filter(p=>normThick(p.thickness)===t);
   if(!base.length) base=DATA.products;                 // no exact thickness yet -> suggest all grades
   const grades=uniq(base.map(p=>p.grade)).sort((a,b)=>String(a).localeCompare(String(b),undefined,{numeric:true}));
   opts("dl_grade", grades);
   fillWidth();
 }
 function fillWidth(){
-  const t=normField($("thickness").value),g=normField($("grade").value);
-  let rows=DATA.products.filter(p=>(!t||normField(p.thickness)===t)&&(!g||normField(p.grade)===g));
+  const t=normThick($("thickness").value),g=normField($("grade").value);
+  let rows=DATA.products.filter(p=>(!t||normThick(p.thickness)===t)&&(!g||normField(p.grade)===g));
   if(!rows.length) rows=DATA.products;
   opts("dl_width", orderBy(rows,"width").filter(w=>w!=null&&w!==""));
 }
@@ -495,8 +500,8 @@ function unitChanged(){
 $("unit").onchange=unitChanged;
 
 function currentKey(){
-  const t=normField($("thickness").value),g=normField($("grade").value),w=normField($("width").value);
-  const row=DATA.products.find(p=>normField(p.thickness)===t&&normField(p.grade)===g&&normField(p.width==null?"":p.width)===w);
+  const t=normThick($("thickness").value),g=normField($("grade").value),w=normField($("width").value);
+  const row=DATA.products.find(p=>normThick(p.thickness)===t&&normField(p.grade)===g&&normField(p.width==null?"":p.width)===w);
   return row?row.key:null;
 }
 function basis(){ return document.querySelector('input[name="basis"]:checked').value; }
