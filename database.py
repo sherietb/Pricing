@@ -227,7 +227,7 @@ CREATE TABLE IF NOT EXISTS quotes (
 );
 CREATE TABLE IF NOT EXISTS customers (
     name TEXT PRIMARY KEY, segment TEXT, playbook INTEGER, credit TEXT,
-    dyn_cwt REAL DEFAULT 0, region TEXT
+    dyn_cwt REAL DEFAULT 0, region TEXT, region_locked INTEGER DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS cust_config (k TEXT PRIMARY KEY, v REAL);
 CREATE TABLE IF NOT EXISTS quote_log (
@@ -580,10 +580,33 @@ def list_customers():
     conn = connect()
     conn.executescript(SCHEMA)
     rows = [dict(r) for r in conn.execute(
-        "SELECT name, segment, playbook, credit, COALESCE(dyn_cwt,0) dyn_cwt, region "
-        "FROM customers ORDER BY name")]
+        "SELECT name, segment, playbook, credit, COALESCE(dyn_cwt,0) dyn_cwt, region, "
+        "COALESCE(region_locked,0) region_locked FROM customers ORDER BY name")]
     conn.close()
     return rows
+
+
+def set_customer_region(name, region, locked=True):
+    """Manually classify a customer's region. locked=True pins it so the nightly
+    auto-region (ship-to ZIP) import won't overwrite it. region=None + locked=False
+    clears the lock and lets auto-region resolve again on the next import."""
+    _ensure_quote_status()
+    name = (name or "").strip()
+    if not name:
+        raise ValueError("customer name required")
+    region = (region or "").strip() or None
+    conn = connect()
+    conn.executescript(SCHEMA)
+    row = conn.execute("SELECT name FROM customers WHERE name=?", (name,)).fetchone()
+    if row:
+        conn.execute("UPDATE customers SET region=?, region_locked=? WHERE name=?",
+                     (region, 1 if locked else 0, name))
+    else:
+        conn.execute("INSERT INTO customers (name, playbook, credit, region, region_locked) "
+                     "VALUES (?,?,?,?,?)", (name, 2, "low", region, 1 if locked else 0))
+    conn.commit()
+    conn.close()
+    return get_customer(name)
 
 
 def get_customer(name):
@@ -667,6 +690,8 @@ def _ensure_quote_status():
         conn.execute("ALTER TABLE customers ADD COLUMN dyn_cwt REAL DEFAULT 0")
     if "region" not in ccols:
         conn.execute("ALTER TABLE customers ADD COLUMN region TEXT")
+    if "region_locked" not in ccols:
+        conn.execute("ALTER TABLE customers ADD COLUMN region_locked INTEGER DEFAULT 0")
     conn.execute("CREATE TABLE IF NOT EXISTS dash_config (k TEXT PRIMARY KEY, v REAL)")
     conn.commit()
     conn.close()
@@ -1162,17 +1187,22 @@ def import_customers_from_db():
             matched += 1
         else:                                 # keep any prior/admin segment if no ERP match
             seg = ex["segment"] if ex else ""
-        region = (regions.get(name) or {}).get("region")
-        if region:
-            regioned += 1
-        else:                                 # keep any prior/admin region if unresolved
-            region = ex.get("region") if ex else None
-        # ON CONFLICT preserves each customer's dyn_cwt (their earned margin history).
+        locked = bool(ex.get("region_locked")) if ex else False
+        if locked:                            # manual classification wins - never overwrite
+            region = ex.get("region")
+        else:
+            region = (regions.get(name) or {}).get("region")
+            if region:
+                regioned += 1
+            else:                             # keep any prior region if unresolved
+                region = ex.get("region") if ex else None
+        # ON CONFLICT preserves dyn_cwt and the region lock flag.
         conn.execute(
-            "INSERT INTO customers (name, segment, playbook, credit, region) VALUES (?,?,?,?,?) "
+            "INSERT INTO customers (name, segment, playbook, credit, region, region_locked) "
+            "VALUES (?,?,?,?,?,?) "
             "ON CONFLICT(name) DO UPDATE SET credit=excluded.credit, segment=excluded.segment, "
             "region=excluded.region",
-            (name, seg, ex["playbook"] if ex else 2, credit, region))
+            (name, seg, ex["playbook"] if ex else 2, credit, region, 1 if locked else 0))
         n += 1
     conn.commit()
     conn.close()
