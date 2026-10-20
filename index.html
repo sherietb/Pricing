@@ -424,6 +424,7 @@ async function boot(){
   const custs=DATA.customers||[];
   const prevCust=$("custselect").value;
   $("custselect").innerHTML='<option value="">— none —</option>'+
+     '<option value="Prospect">Prospect (new customer — not in database)</option>'+
      custs.map(c=>'<option value="'+c.name+'">'+c.name+" (PB"+c.playbook+(c.credit==="high"?", High risk":"")+")</option>").join("");
   if(prevCust) $("custselect").value=prevCust;
   showCustNote();
@@ -438,7 +439,9 @@ async function boot(){
   fillThickness();
 }
 function showCustNote(){
-  const c=(DATA.customers||[]).find(x=>x.name===$("custselect").value);
+  const v=$("custselect").value;
+  if(v==="Prospect"){ $("custnote").textContent="New prospect — not in database; no customer adders. Pick a region manually."; return; }
+  const c=(DATA.customers||[]).find(x=>x.name===v);
   $("custnote").textContent=c?("Playbook "+c.playbook+" · "+(c.credit==="high"?"High risk":"Low risk")+(c.segment?" · "+c.segment:"")+(c.region?" · "+c.region:"")+(c.dyn_cwt?" · dynamic +$"+(+c.dyn_cwt).toFixed(2)+"/cwt":"")):"";
 }
 function applyCustomerRegion(){
