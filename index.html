@@ -266,6 +266,12 @@
   <div class="card no-print quoteonly">
     <details class="admin">
       <summary>Admin</summary>
+      <div class="basis no-print" style="margin-top:12px">
+        <span class="sub2" style="font-weight:600">Quote journal</span>
+        <span class="sub2" id="logicver"></span>
+        <button class="ghost" id="dljournal">Download quote journal (Excel)</button>
+        <span class="sub2">Logs every saved/exported quote with the logic version &amp; config in effect.</span>
+      </div>
       <div style="margin-top:14px" class="grid">
         <div><label>Product key</label><input id="akey" type="text" placeholder="e.g. 14G-48-1011"></div>
         <div><label>New price ($/cwt)</label><input id="aprice" type="number" step="0.01"></div>
@@ -390,6 +396,7 @@ async function boot(){
   const mt=DATA.meta||{};
   $("meta").textContent = mt.source_workbook
      ? ("Source: "+mt.source_workbook+(mt.last_import?" · imported "+mt.last_import.slice(0,10):"")) : "";
+  if($("logicver")&&DATA.logic_version) $("logicver").textContent="· logic v"+DATA.logic_version;
   $("extras").innerHTML = DATA.extras.map(e=>
      '<label><input type="checkbox" class="ex" value="'+e.name+'"> '+e.name+" (+$"+e.adder_cwt.toFixed(2)+")</label>").join("");
   const prevDest=$("dest").value;
@@ -676,6 +683,10 @@ $("savequote").onclick=async()=>{
   $("savemsg").textContent=r.id?("Saved #"+r.id):"Save failed";
   setTimeout(()=>{$("savemsg").textContent="";},2500);
   loadSaved();
+};
+if($("dljournal")) $("dljournal").onclick=async()=>{
+  const a=document.createElement("a"); a.href="/api/export-log"; a.download="Quote_Journal.xlsx";
+  document.body.appendChild(a); a.click(); a.remove();
 };
 $("exportxlsx").onclick=async()=>{
   if(!LINES.length) return;

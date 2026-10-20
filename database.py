@@ -230,7 +230,17 @@ CREATE TABLE IF NOT EXISTS customers (
     dyn_cwt REAL DEFAULT 0, region TEXT
 );
 CREATE TABLE IF NOT EXISTS cust_config (k TEXT PRIMARY KEY, v REAL);
+CREATE TABLE IF NOT EXISTS quote_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, logged_at TEXT, event TEXT,
+    logic_version TEXT, customer TEXT, region TEXT, grand_total REAL,
+    payload TEXT, result TEXT, config TEXT
+);
 """
+
+# Bump LOGIC_VERSION whenever pricing logic changes, and add a CHANGELOG.md entry.
+# Every logged quote is stamped with this plus a full config snapshot, so a historical
+# quote can always be traced back to exactly how it was priced.
+LOGIC_VERSION = "2026.10.20"
 
 # Customer pricing layers ($/cwt), tunable in Admin. Playbook 1/2/3, credit High/Low,
 # and a DYNAMIC margin that ratchets up per win (capped) and eases back per loss.
@@ -466,6 +476,78 @@ def delete_quote(qid):
     conn.commit()
     conn.close()
     return n
+
+
+# ---- quote journal + logic version log ---------------------------------
+def logic_snapshot():
+    """The pricing logic/config in effect right now, stored with each logged quote so
+    a historical quote can be reproduced exactly. Callers (server) may merge in extra
+    config they own, e.g. inventory rules and cost config."""
+    try:
+        regions = [dict(r) for r in connect().execute(
+            "SELECT destination, freight_cwt, comp_cwt FROM freight ORDER BY destination")]
+    except Exception:
+        regions = []
+    snap = {"logic_version": LOGIC_VERSION, "regions": regions}
+    try:
+        snap["cust_config"] = get_cust_config()
+    except Exception:
+        pass
+    try:
+        cf = latest_credit_file()
+        snap["credit_file"] = os.path.basename(cf) if cf else None
+    except Exception:
+        pass
+    return snap
+
+
+def log_quote(event, payload, result, extra_config=None):
+    """Append a quote to the journal with a full logic/config snapshot.
+    event: 'saved' | 'exported' | 'priced' (whatever generated it)."""
+    cfg = logic_snapshot()
+    if extra_config:
+        cfg.update(extra_config)
+    payload = payload or {}
+    result = result or {}
+    conn = connect()
+    conn.executescript(SCHEMA)
+    conn.execute(
+        "INSERT INTO quote_log (logged_at, event, logic_version, customer, region, "
+        "grand_total, payload, result, config) VALUES (?,?,?,?,?,?,?,?,?)",
+        (datetime.now().isoformat(timespec="seconds"), event, LOGIC_VERSION,
+         (payload.get("customer_name") or payload.get("customer") or "").strip(),
+         payload.get("destination") or "",
+         result.get("grand_total"),
+         json.dumps(payload), json.dumps(result), json.dumps(cfg)))
+    conn.commit()
+    conn.close()
+
+
+def list_quote_log(limit=500, full=False):
+    conn = connect()
+    conn.executescript(SCHEMA)
+    rows = []
+    for r in conn.execute(
+            "SELECT id, logged_at, event, logic_version, customer, region, grand_total, "
+            "payload, result, config FROM quote_log ORDER BY id DESC LIMIT ?", (limit,)):
+        d = dict(r)
+        try:
+            lines = json.loads(d["payload"]).get("lines", [])
+            d["lines"] = len(lines)
+        except Exception:
+            d["lines"] = None
+        if not full:
+            for k in ("payload", "result", "config"):
+                d.pop(k, None)
+        else:
+            for k in ("payload", "result", "config"):
+                try:
+                    d[k] = json.loads(d[k]) if d[k] else None
+                except Exception:
+                    pass
+        rows.append(d)
+    conn.close()
+    return rows
 
 
 # ---- customers ----------------------------------------------------------

@@ -54,6 +54,21 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
+    def _log_quote(self, event, payload, result, ref=None):
+        """Journal a generated quote with the inventory/cost config the server owns."""
+        extra = {}
+        try:
+            extra["inv_rules"] = inventory.get_rules()
+        except Exception:
+            pass
+        try:
+            extra["cost_config"] = costing.get_config()
+        except Exception:
+            pass
+        if ref is not None:
+            extra["saved_quote_id"] = ref
+        db.log_quote(event, payload, result, extra_config=extra)
+
     def _read_json(self):
         length = int(self.headers.get("Content-Length", 0))
         if not length:
@@ -73,6 +88,13 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(500, {"error": "index.html missing"})
         elif self.path == "/api/quotes":
             self._send(200, {"quotes": db.list_quotes()})
+        elif self.path.startswith("/api/quote-log"):
+            self._send(200, {"log": db.list_quote_log(), "logic_version": db.LOGIC_VERSION})
+        elif self.path == "/api/export-log":
+            data = quote_export.build_journal_workbook(db.list_quote_log(limit=5000, full=True))
+            from datetime import datetime
+            self._send_download(data, "Quote_Journal_%s.xlsx" % datetime.now().strftime("%Y%m%d"),
+                                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
         elif self.path.startswith("/api/dashboard"):
             import urllib.parse
             q = urllib.parse.parse_qs(self.path.split("?", 1)[1]) if "?" in self.path else {}
@@ -98,6 +120,7 @@ class Handler(BaseHTTPRequestHandler):
             data["cost_config"] = costing.get_config()
             data["customers"] = db.list_customers()
             data["cust_config"] = db.get_cust_config()
+            data["logic_version"] = db.LOGIC_VERSION
             self._send(200, data)
         else:
             self._send(404, {"error": "not found"})
@@ -110,6 +133,7 @@ class Handler(BaseHTTPRequestHandler):
                 payload = self._read_json()
                 result = self._quote(payload)
                 data = quote_export.build_workbook(payload, result, db.get_product)
+                self._log_quote("exported", payload, result)
                 from datetime import datetime
                 fn = "Quote_%s.xlsx" % datetime.now().strftime("%Y%m%d_%H%M")
                 self._send_download(
@@ -159,8 +183,13 @@ class Handler(BaseHTTPRequestHandler):
                     pl.get("competitor_cwt")) if qid.isdigit() else 0})
             elif self.path == "/api/quotes":
                 pl = self._read_json()
+                quote = pl.get("quote", {})
                 qid = db.save_quote(pl.get("customer"), pl.get("quote_no"),
-                                    pl.get("quote", {}), pl.get("grand_total"))
+                                    quote, pl.get("grand_total"))
+                try:
+                    self._log_quote("saved", quote, self._quote(quote), ref=qid)
+                except Exception:
+                    pass
                 self._send(200, {"id": qid})
             elif self.path.startswith("/api/quotes/") and self.path.endswith("/delete"):
                 qid = self.path.split("/")[3]

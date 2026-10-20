@@ -67,6 +67,58 @@ def _form_label(product, inv):
 UOM = {"pieces": "pc", "lbs": "lb", "coil": "coil", "tl": "TL"}
 
 
+def build_journal_workbook(rows):
+    """Excel of the quote journal: one row per generated quote, each stamped with the
+    logic version and a snapshot of the config (region rates, adders, credit file)
+    that produced it."""
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Quote journal"
+    thin = Side(style="thin", color="D0D7E2")
+    border = Border(left=thin, right=thin, top=thin, bottom=thin)
+    HDR = ["ID", "Logged At", "Event", "Logic Version", "Customer", "Region", "Lines",
+           "Grand Total", "Credit File", "PB1 $", "PB2 $", "PB3 $", "Credit High $",
+           "Region Rates (freight/comp)"]
+    ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=len(HDR))
+    ws.cell(1, 1, "Willbanks Pricing App - Quote Journal (logic-stamped history)").font = \
+        Font(bold=True, size=13, color="FFFFFF")
+    ws.cell(1, 1).fill = PatternFill("solid", fgColor=NAVY)
+    ws.row_dimensions[1].height = 24
+    for c, h in enumerate(HDR, 1):
+        cell = ws.cell(3, c, h)
+        cell.font = Font(bold=True, color="FFFFFF", size=10)
+        cell.fill = PatternFill("solid", fgColor=BLUE)
+        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        cell.border = border
+    ws.row_dimensions[3].height = 28
+    r = 4
+    for row in rows:
+        cfg = row.get("config") or {}
+        cc = cfg.get("cust_config") or {}
+        regs = cfg.get("regions") or []
+        reg_str = "; ".join("%s %s/%s" % (x.get("destination"), x.get("freight_cwt"), x.get("comp_cwt"))
+                            for x in regs)
+        vals = [row.get("id"), row.get("logged_at"), row.get("event"), row.get("logic_version"),
+                row.get("customer"), row.get("region"), row.get("lines"), row.get("grand_total"),
+                cfg.get("credit_file"), cc.get("pb1_cwt"), cc.get("pb2_cwt"), cc.get("pb3_cwt"),
+                cc.get("credit_high_cwt"), reg_str]
+        for c, v in enumerate(vals, 1):
+            cell = ws.cell(r, c, v)
+            cell.border = border
+            cell.alignment = Alignment(horizontal="left" if c in (5, 14) else "center", vertical="top")
+        ws.cell(r, 8).number_format = '$#,##0.00'
+        r += 1
+    from openpyxl.utils import get_column_letter
+    widths = [6, 18, 9, 13, 26, 14, 6, 13, 24, 7, 7, 7, 11, 52]
+    for c, wd in enumerate(widths, 1):
+        ws.column_dimensions[get_column_letter(c)].width = wd
+    ws.freeze_panes = "A4"
+    ws.sheet_view.showGridLines = False
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
 def build_workbook(payload, result, get_product):
     """Return .xlsx bytes for a computed quote.
 
