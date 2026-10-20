@@ -25,6 +25,7 @@ import costing
 import database as db
 import inventory
 import pricing_engine as pe
+import quote_export
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 INDEX = os.path.join(HERE, "index.html")
@@ -44,6 +45,14 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
+
+    def _send_download(self, data, filename, ctype):
+        self.send_response(200)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Content-Disposition", 'attachment; filename="%s"' % filename)
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
 
     def _read_json(self):
         length = int(self.headers.get("Content-Length", 0))
@@ -97,6 +106,15 @@ class Handler(BaseHTTPRequestHandler):
         try:
             if self.path == "/api/quote":
                 self._send(200, self._quote(self._read_json()))
+            elif self.path == "/api/export-quote":
+                payload = self._read_json()
+                result = self._quote(payload)
+                data = quote_export.build_workbook(payload, result, db.get_product)
+                from datetime import datetime
+                fn = "Quote_%s.xlsx" % datetime.now().strftime("%Y%m%d_%H%M")
+                self._send_download(
+                    data, fn,
+                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
             elif self.path == "/api/admin/price":
                 payload = self._read_json()
                 n = db.update_price(payload["key"], payload["price_cwt"])
@@ -157,7 +175,9 @@ class Handler(BaseHTTPRequestHandler):
         stock, length, extras_catalog = db.get_tiers()
         lines = payload.get("lines", [])
         basis = (payload.get("adder_basis") or "line").lower()
-        use_inv = bool(payload.get("use_inventory"))
+        # Inventory-position adjustment is applied automatically whenever inventory data
+        # is loaded (the old opt-in toggle defaulted off); pass use_inventory=false to suppress.
+        use_inv = payload.get("use_inventory", True) is not False and inventory.has_data()
         rules = inventory.get_rules() if inventory.has_data() else None
         region = payload.get("destination")            # region name (kept key for back-compat)
         region_mode = (payload.get("region_mode") or "both").lower()   # freight | comp | both
