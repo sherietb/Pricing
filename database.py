@@ -1142,18 +1142,26 @@ def customers_db_available():
 
 
 def import_customers_from_db():
-    """Pull active customers + credit status live from the ERP (Planning.dbo.transports),
-    plus segment from salesforce_billings.dim_seg (matched on customer name).
-    Credit code 'H' (hold) -> high risk, else low. Preserves each customer's
-    admin-assigned playbook and their earned dynamic margin."""
+    """Pull the full customer universe live from the ERP -- the Salesforce customer
+    tables (sales_numbers + billings, ~800 names) UNION transports -- so customers
+    with no current transport activity (e.g. Signal Metal Industries) still appear.
+    Segment from salesforce_billings.dim_seg, region from the ship-to ZIP, high-risk
+    credit from the maintained credit file. Preserves admin playbook, earned dynamic
+    margin, and locked manual regions."""
     import pyodbc
-    cn = pyodbc.connect(CUST_DB_CONN, timeout=20)
+    cn = pyodbc.connect(CUST_DB_CONN, timeout=30)
     cur = cn.cursor()
-    cur.execute("""SELECT customer_name, MAX(credit_status)
-                   FROM dbo.transports
-                   WHERE customer_name IS NOT NULL AND LTRIM(RTRIM(customer_name)) <> ''
-                   GROUP BY customer_name""")
-    rows = cur.fetchall()
+    cur.execute("""
+        SELECT DISTINCT LTRIM(RTRIM(customer)) nm FROM dbo.salesforce_sales_numbers
+            WHERE customer IS NOT NULL AND LTRIM(RTRIM(customer)) <> ''
+        UNION
+        SELECT DISTINCT LTRIM(RTRIM(customer)) FROM dbo.salesforce_billings
+            WHERE customer IS NOT NULL AND LTRIM(RTRIM(customer)) <> ''
+        UNION
+        SELECT DISTINCT LTRIM(RTRIM(customer_name)) FROM dbo.transports
+            WHERE customer_name IS NOT NULL AND LTRIM(RTRIM(customer_name)) <> ''
+    """)
+    rows = [(r[0], None) for r in cur.fetchall()]   # (name, _) -- credit comes from the file now
     cn.close()
     resolve_seg = None
     try:
