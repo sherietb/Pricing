@@ -10,6 +10,14 @@ logic changes (adders, region rates, inventory rules, credit rules, engine math)
 
 ---
 
+## Cost-basis (CRU) updates
+These change the **material-cost basis** used for spread/margin display and the
+below-floor flag — not the quoted selling price (which comes from the Pricing
+workbook). Each quote's journal entry snapshots the CRU in effect at the time.
+
+- **2026-10-14 CRU:** HR **$1,285/ton = $64.25/cwt**, Plate **$1,430/ton = $71.50/cwt**
+  (plate applied to all width tiers). Set `hrc=64.25`, `plate_narrow/wide/120=71.50`.
+
 ## 2026.10.20
 - **Quote journal added.** Every saved/exported quote is logged with a timestamp,
   the logic version, and a config snapshot (region rates, customer adders, credit
