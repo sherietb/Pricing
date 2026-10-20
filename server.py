@@ -132,7 +132,11 @@ class Handler(BaseHTTPRequestHandler):
             elif self.path == "/api/export-quote":
                 payload = self._read_json()
                 result = self._quote(payload)
-                data = quote_export.build_workbook(payload, result, db.get_product)
+                cust = db.get_customer(payload.get("customer_name"))
+                pb = (cust or {}).get("playbook", 2) or 2
+                pb_adder = db.get_cust_config().get("pb%d_cwt" % pb, 0.0)
+                data = quote_export.build_workbook(payload, result, db.get_product,
+                                                   playbook=pb, pb_adder=pb_adder)
                 self._log_quote("exported", payload, result)
                 from datetime import datetime
                 fn = "Quote_%s.xlsx" % datetime.now().strftime("%Y%m%d_%H%M")

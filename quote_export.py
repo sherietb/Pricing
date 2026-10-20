@@ -31,7 +31,7 @@ COLUMNS = [
     ("Volume adder", "adder"),
     ("Region - Freight", "adder"), ("Region - Competitive", "adder"),
     ("Inventory position", "adder"),
-    ("Competitive (playbook)", "adder"), ("Segmentation", "adder"),
+    ("PB tier", "adder"), ("PB adder", "adder"), ("Segmentation", "adder"),
     ("Credit", "adder"), ("Dynamic margin", "adder"),
     ("Custom-length adder", "adder"), ("Extras", "adder"),
 ]
@@ -48,7 +48,7 @@ def _adder_column(label):
     if l.startswith("Inventory"):           return "Inventory position"
     if l.startswith("Freight"):             return "Region - Freight"
     if l.startswith("Region (competitive"): return "Region - Competitive"
-    if l.startswith("Playbook"):            return "Competitive (playbook)"
+    if l.startswith("Playbook"):            return "PB adder"
     if l.startswith("Segment"):             return "Segmentation"
     if l.startswith("Credit"):              return "Credit"
     if l.startswith("Dynamic margin"):      return "Dynamic margin"
@@ -119,12 +119,14 @@ def build_journal_workbook(rows):
     return buf.getvalue()
 
 
-def build_workbook(payload, result, get_product):
+def build_workbook(payload, result, get_product, playbook=2, pb_adder=0.0):
     """Return .xlsx bytes for a computed quote.
 
     payload : the quote request ({lines, customer_name, destination, ...})
     result  : the pricing result from the quote engine ({lines:[...], ...})
     get_product : callable key -> product dict
+    playbook / pb_adder : the selected customer's playbook tier (1/2/3) and its $/cwt
+                          adder, shown on each priced line.
     """
     wb = openpyxl.Workbook()
     ws = wb.active
@@ -202,6 +204,12 @@ def build_workbook(payload, result, get_product):
                 cur = row.get(col) or 0.0
                 row[col] = round(cur + float(b.get("cwt") or 0), 2)
 
+        # Show the customer's playbook on every priced line (the PB2 default is $0,
+        # so the breakdown omits it -- surface it here so the field is always visible).
+        if not res.get("off_sheet") and not res.get("manual_quote") and res.get("rate_cwt") is not None:
+            row["PB tier"] = "PB%d" % playbook
+            row["PB adder"] = round(float(pb_adder), 2)
+
         if res.get("manual_quote"):
             row["Suggested $/cwt"] = row["Suggested $/cwt"] or "MANUAL"
 
@@ -211,7 +219,7 @@ def build_workbook(payload, result, get_product):
             cell.alignment = Alignment(horizontal="left" if h in ("Form", "Grade", "UOM") else "center")
             if h in ("Avg Cost $/cwt (avail)", "Avg Cost $/cwt (incoming)", "Suggested $/cwt",
                      "Base $/cwt", "Volume adder", "Region - Freight", "Region - Competitive",
-                     "Inventory position", "Competitive (playbook)", "Segmentation", "Credit",
+                     "Inventory position", "PB adder", "Segmentation", "Credit",
                      "Dynamic margin", "Custom-length adder", "Extras") and isinstance(row[h], (int, float)):
                 cell.number_format = '$#,##0.00;[Red]-$#,##0.00'
             elif h == "Total Price" and isinstance(row[h], (int, float)):
@@ -240,7 +248,7 @@ def build_workbook(payload, result, get_product):
                 if cell.fill.fgColor.rgb in (None, "00000000"):
                     cell.fill = PatternFill("solid", fgColor=fill)
     widths = [5, 10, 9, 9, 9, 9, 7, 6, 13, 13, 11, 11, 13, 11, 14,
-              12, 13, 10, 11, 13, 14, 12, 14, 12, 9, 13, 13, 9]
+              12, 13, 10, 11, 13, 14, 12, 8, 11, 12, 9, 13, 13, 9]
     from openpyxl.utils import get_column_letter
     for i, wd in enumerate(widths[:ncol], 1):
         ws.column_dimensions[get_column_letter(i)].width = wd
