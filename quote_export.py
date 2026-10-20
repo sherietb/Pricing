@@ -168,11 +168,13 @@ def build_workbook(payload, result, get_product):
         prod = get_product(res.get("key")) or {}
         inv = res.get("inventory") or {}
         row = {h: None for h in headers}
+        offsheet = bool(res.get("off_sheet"))
         row["Line"] = idx + 1
-        row["Thickness"] = pe.thickness_label(prod.get("thickness")) if prod.get("thickness") else None
-        row["Form"] = _form_label(prod, inv)
-        row["Grade"] = prod.get("grade")
-        row["Width (in)"] = prod.get("width_num") or prod.get("width")
+        row["Thickness"] = (pe.thickness_label(prod.get("thickness")) if prod.get("thickness")
+                            else (lin.get("thickness") or None))
+        row["Form"] = ("OFF-SHEET" if offsheet else _form_label(prod, inv))
+        row["Grade"] = prod.get("grade") or lin.get("grade")
+        row["Width (in)"] = prod.get("width_num") or prod.get("width") or lin.get("width")
         row["Length (in)"] = lin.get("length_in")
         row["Qty"] = res.get("qty") if res.get("qty") is not None else lin.get("qty")
         row["UOM"] = UOM.get((res.get("unit") or lin.get("unit") or "").lower(), res.get("unit"))

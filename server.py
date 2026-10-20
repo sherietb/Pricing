@@ -221,9 +221,11 @@ class Handler(BaseHTTPRequestHandler):
         min_spread = costing.get_min_spread()
 
         def price(line, tier_weight=None):
+            if line.get("offsheet") or not line.get("key"):
+                return _offsheet_result(line)
             product = db.get_product(line["key"])
             if not product:
-                return {"key": line.get("key"), "error": "unknown product"}
+                return _offsheet_result(line)   # key no longer in the price list
             inv = inventory.get_inventory_for(line["key"], product["grade"], rules) if rules else None
             adj = None
             if use_inv and inv and inv.get("adjustment_cwt"):
@@ -262,7 +264,7 @@ class Handler(BaseHTTPRequestHandler):
             results = []
             for i, l in enumerate(lines):
                 r0 = first[i]
-                if r0.get("error") or r0.get("manual_quote"):
+                if r0.get("error") or r0.get("manual_quote") or r0.get("off_sheet"):
                     results.append(r0)
                 else:
                     results.append(price(l, tier_weight=order_weight))
@@ -273,6 +275,49 @@ class Handler(BaseHTTPRequestHandler):
         return {"lines": results, "grand_total": round(grand, 2),
                 "adder_basis": basis, "order_weight_lb": round(order_weight, 1),
                 "inventory_applied": use_inv}
+
+
+def _offsheet_result(line):
+    """A line for an item not on the price sheet: compute its weight, price it at $0,
+    and flag it so the rep knows it needs a manual price."""
+    th = (line.get("thickness") or "").strip()
+    gr = (line.get("grade") or "").strip()
+    wd = (line.get("width") or "").strip()
+    desc = " / ".join(p for p in [th, gr, (wd + '" wide' if wd else "")] if p) or "custom item"
+    unit = (line.get("unit") or "pieces").lower()
+    try:
+        qty = float(line.get("qty") or 0)
+    except (TypeError, ValueError):
+        qty = 0.0
+    weight, wbasis = None, None
+    if qty > 0:
+        if unit == "lbs":
+            weight, wbasis = qty, f"{qty:,.0f} lb"
+        elif unit in ("coil", "tl"):
+            weight = qty * pe.COIL_TL_WEIGHT_LB
+            wbasis = f"{qty:g} {'coil' if unit == 'coil' else 'TL'} x {pe.COIL_TL_WEIGHT_LB:,} lb"
+        else:  # pieces
+            th_in = pe.thickness_to_inch(th)
+            w_in = pe.width_to_number(wd) if wd else None
+            try:
+                L = float(line.get("length_in") or 0)
+            except (TypeError, ValueError):
+                L = 0.0
+            if th_in and w_in and L > 0:
+                weight = pe.piece_weight_lb(th_in, w_in, L, qty)
+                wbasis = f"{qty:g} pc x {w_in:g}\" x {L:g}\""
+    return {
+        "key": line.get("key") or "(off-sheet)",
+        "description": desc,
+        "off_sheet": True,
+        "manual_quote": False,
+        "note": "Not on the price sheet — defaulted to $0, needs a manual price.",
+        "unit": unit, "qty": qty,
+        "weight_basis": wbasis,
+        "weight_lb": round(weight) if weight else None,
+        "breakdown": [{"label": "Base price", "cwt": 0.0}],
+        "rate_cwt": 0.0, "line_total": 0.0, "inventory": None,
+    }
 
 
 def _inventory_watch(interval=600):

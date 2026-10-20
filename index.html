@@ -109,9 +109,9 @@
   <div class="card no-print quoteonly">
     <h2>Enter what you&rsquo;re quoting</h2>
     <div class="grid">
-      <div><label>Thickness</label><input id="thickness" list="dl_thickness" autocomplete="off" placeholder="type or pick, e.g. 316, 14G"><datalist id="dl_thickness"></datalist></div>
-      <div><label>Grade</label><input id="grade" list="dl_grade" autocomplete="off" placeholder="type or pick, e.g. 36, 572-50"><datalist id="dl_grade"></datalist></div>
-      <div><label>Width</label><input id="width" list="dl_width" autocomplete="off" placeholder="type or pick, e.g. 60, 96"><datalist id="dl_width"></datalist></div>
+      <div><label>Thickness</label><input id="thickness" type="text" list="dl_thickness" autocomplete="off" placeholder="type or pick, e.g. 316, 14G"><datalist id="dl_thickness"></datalist></div>
+      <div><label>Grade</label><input id="grade" type="text" list="dl_grade" autocomplete="off" placeholder="type or pick, e.g. 36, 572-50"><datalist id="dl_grade"></datalist></div>
+      <div><label>Width</label><input id="width" type="text" list="dl_width" autocomplete="off" placeholder="type or pick, e.g. 60, 96"><datalist id="dl_width"></datalist></div>
       <div><label id="lengthlabel">Length (inches)</label><input id="length" type="number" min="0" step="0.25" value="120"></div>
       <div><label>Quantity</label><input id="qty" type="number" min="0" step="any" value="1"></div>
       <div><label>Priced by</label>
@@ -500,15 +500,17 @@ let LINES=[];
 let EDITING=null;
 function buildLine(){
   const key=currentKey();
-  if(!key){$("formmsg").textContent="That combination is not in the price list.";return null;}
   const unit=$("unit").value;
-  const line={key,unit,qty:parseFloat($("qty").value),
-      length_in:parseFloat($("length").value),
-      custom_length:false,
-      extras:[...document.querySelectorAll(".ex:checked")].map(c=>c.value)};
-  if(!(line.qty>0)){$("formmsg").textContent="Enter a positive quantity.";return null;}
-  if(unit==="pieces"&&!(line.length_in>0)){$("formmsg").textContent="Enter a length (inches) for a per-piece quote.";return null;}
-  return line;
+  const qty=parseFloat($("qty").value);
+  const length_in=parseFloat($("length").value);
+  const extras=[...document.querySelectorAll(".ex:checked")].map(c=>c.value);
+  if(!(qty>0)){$("formmsg").textContent="Enter a positive quantity.";return null;}
+  if(unit==="pieces"&&!(length_in>0)){$("formmsg").textContent="Enter a length (inches) for a per-piece quote.";return null;}
+  if(key) return {key,unit,qty,length_in,custom_length:false,extras};
+  // Not on the price sheet -> allow it anyway at $0 with a flag.
+  const thickness=$("thickness").value.trim(),grade=$("grade").value.trim(),width=$("width").value.trim();
+  if(!thickness&&!grade&&!width){$("formmsg").textContent="Enter thickness, grade, and/or width.";return null;}
+  return {offsheet:true,thickness,grade,width,unit,qty,length_in,custom_length:false,extras};
 }
 $("add").onclick=async()=>{
   $("formmsg").textContent="";
@@ -523,6 +525,8 @@ window.editLine=i=>{
   const line=LINES[i]; const p=DATA.products.find(x=>x.key===line.key);
   if(p){ $("thickness").value=p.thickness; fillGrade(); $("grade").value=p.grade; fillWidth();
          $("width").value=(p.width==null?"":p.width); }
+  else if(line.offsheet){ $("thickness").value=line.thickness||""; fillGrade();
+         $("grade").value=line.grade||""; fillWidth(); $("width").value=line.width||""; }
   $("qty").value=line.qty; $("unit").value=line.unit; unitChanged();
   $("length").value=(line.length_in!=null?line.length_in:"");
   document.querySelectorAll(".ex").forEach(c=>{ c.checked=(line.extras||[]).includes(c.value); });
@@ -560,6 +564,9 @@ async function refresh(){
     if(r.manual_quote) return "<tr><td>"+item+'</td><td class="num">'+wnum(r.weight_lb)+"</td>"+
         '<td colspan="2"><span class="pill manual">Manual quote</span> <span class="bd">'+(r.note||"")+"</span></td>"+
         '<td class="num">—</td>'+x+"</tr>";
+    if(r.off_sheet) return "<tr><td>"+item+'</td><td class="num">'+(r.weight_lb!=null?wnum(r.weight_lb):"—")+"</td>"+
+        '<td colspan="2"><span class="pill" style="background:var(--warnbg);color:var(--warn)">⚠ Not on price sheet</span> <span class="bd">'+(r.note||"")+"</span></td>"+
+        '<td class="num"><strong>$0.00</strong></td>'+x+"</tr>";
     const bd=r.breakdown.map(b=>b.label+": $"+b.cwt.toFixed(2)).join("<br>");
     const wt='<div class="num">'+wnum(r.weight_lb)+'</div><div class="sub2">'+wbasis(r.weight_basis)+"</div>";
     const sp=(r.spread_cwt!=null)?'<div class="sub2 '+(r.below_floor?"floorwarn":"")+'">CRU Spread $'+r.spread_cwt.toFixed(2)+" ("+r.spread_pct+"%)"+(r.below_floor?" ⚠ below floor":"")+"</div>":"";
