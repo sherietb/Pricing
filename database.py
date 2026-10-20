@@ -18,27 +18,44 @@ import pricing_engine as pe
 HERE = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.path.join(HERE, "pricing.db")
 
-# High-risk credit is driven by Invex "Statement Cycle = D" (Customer Account ->
-# Credit control). That field is NOT in the SQL extracts, so it comes from a
-# maintained export dropped in the folder. Accepts .csv or .xlsx with a customer
-# name/number column; if a statement-cycle column is present, only rows == 'D' count
-# (otherwise every listed customer is treated as cycle D).
-CYCLE_D_FILE = os.environ.get("PRICING_CYCLE_D_FILE",
-                              os.path.join(HERE, "Credit Statement Cycle D.csv"))
+# High-risk credit source. Ultimately this will be Invex "Statement Cycle = D"
+# (Customer Account -> Credit control), but that field isn't in the SQL extracts yet,
+# so for now it's read from a maintained credit file dropped in the folder, e.g.
+# "Top 20 Credit Risk Accounts <date>.xlsx". Every customer listed is treated as
+# high-risk, unless the file has a statement-cycle column (then only rows == 'D' count).
+# Set PRICING_CREDIT_FILE to force a specific file; otherwise the newest match wins.
+CREDIT_FILE_ENV = os.environ.get("PRICING_CREDIT_FILE")
+CREDIT_FILE_PATTERNS = ("*Credit Risk*.xls*", "*Credit Statement Cycle*.*",
+                        "*High Risk*Credit*.xls*", "*Credit*Risk*Account*.xls*")
+
+
+def latest_credit_file():
+    if CREDIT_FILE_ENV and os.path.exists(CREDIT_FILE_ENV):
+        return CREDIT_FILE_ENV
+    import glob
+    hits = []
+    for pat in CREDIT_FILE_PATTERNS:
+        hits += glob.glob(os.path.join(HERE, pat))
+    hits = [h for h in hits if not os.path.basename(h).startswith("~$")]
+    return max(hits, key=os.path.getmtime) if hits else None
+
+
+def _norm_credit(s):
+    """Punctuation-insensitive name key for credit matching (keeps suffixes, so it
+    won't conflate different companies): 'Sivalls, Inc' == 'SIVALLS INC'."""
+    import re
+    return " ".join(re.sub(r"[^A-Z0-9 ]", " ", (s or "").upper()).split())
 
 
 def high_risk_cycle_d():
-    """Return {normalized customer name -> True} for Statement-Cycle-D customers,
-    read from CYCLE_D_FILE (.csv or .xlsx). Empty if the file is absent/unreadable."""
-    path = CYCLE_D_FILE
-    if not os.path.exists(path):
-        alt = os.path.splitext(path)[0] + ".xlsx"
-        path = alt if os.path.exists(alt) else None
+    """Return {credit-normalized customer name -> True} for high-risk credit customers,
+    read from the newest credit file in the folder. Empty if none found/readable."""
+    path = latest_credit_file()
     if not path:
         return {}
     rows = []
     try:
-        if path.lower().endswith(".xlsx"):
+        if path.lower().endswith((".xlsx", ".xlsm")):
             import openpyxl
             ws = openpyxl.load_workbook(path, data_only=True).active
             data = list(ws.iter_rows(values_only=True))
@@ -52,16 +69,16 @@ def high_risk_cycle_d():
                         for r in csv.DictReader(f)]
     except Exception:
         return {}
-    name_keys = ("customer", "customer_name", "name", "account_name", "sold_to")
+    name_keys = ("cust_name", "customer", "customer_name", "name", "account_name", "sold_to")
     cyc_keys = ("statement_cycle", "statement cycle", "stmt_cycle", "cycle", "stmt cycle")
     out = {}
     for r in rows:
-        cyc = next((str(r[k]).strip().upper() for k in cyc_keys if k in r and r[k] is not None), None)
+        cyc = next((str(r[k]).strip().upper() for k in cyc_keys if k in r and r[k] not in (None, "")), None)
         if cyc is not None and cyc != "D":
             continue
         nm = next((r[k] for k in name_keys if r.get(k)), None)
         if nm:
-            out[_norm_name(str(nm))] = True
+            out[_norm_credit(str(nm))] = True
     return out
 
 
@@ -1052,7 +1069,7 @@ def import_customers_from_db():
             continue
         # High-risk = Invex Statement Cycle 'D' (from the maintained list), NOT credit_status.
         if cycle_d:
-            credit = "high" if cycle_d.get(_norm_name(name)) else "low"
+            credit = "high" if cycle_d.get(_norm_credit(name)) else "low"
         else:                                 # no list loaded yet: keep whatever was set before
             credit = (existing.get(name) or {}).get("credit", "low")
         if credit == "high":

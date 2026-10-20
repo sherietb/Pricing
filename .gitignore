@@ -25,9 +25,11 @@ _*.js
 # Customer list (proprietary)
 Customers.csv
 
-# Credit Statement Cycle D list (proprietary; drives high-risk credit flag)
+# Credit risk / Statement Cycle list (proprietary; drives high-risk credit flag)
 Credit Statement Cycle D.csv
 Credit Statement Cycle D.xlsx
+*Credit Risk*.xlsx
+*Credit Risk*.csv
 
 # Internal quote export outputs
 Quote Comparison *.xlsx
