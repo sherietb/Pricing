@@ -573,11 +573,21 @@ async function refresh(){
     if(r.error) return '<tr><td>'+(r.key||"")+'</td><td colspan="4" class="msg err">'+r.error+"</td>"+x+"</tr>";
     const iv=r.inventory;
     const pos=(iv&&iv.position&&iv.position!=="unknown")?' <span class="pos '+iv.position+'">'+iv.position+"</span>":"";
-    const oh=(iv&&iv.sku_ohd_lbs!=null)?"On hand: "+wnum(iv.sku_ohd_lbs)+" "+wunit():"";
-    const av=(iv&&iv.sku_available_lbs!=null)?"Available: "+wnum(iv.sku_available_lbs)+" "+wunit():"";
-    const inc=(iv&&iv.sku_incoming_lbs!=null)?"Incoming: "+wnum(iv.sku_incoming_lbs)+" "+wunit():"";
-    const ac=(iv&&iv.avg_cost_cwt!=null)?"Avg cost: $"+iv.avg_cost_cwt.toFixed(2)+"/cwt":"";
-    const posinfo=(oh||av||inc||ac)?'<div class="sub2">'+[oh,av,inc,ac].filter(Boolean).join(" · ")+"</div>":"";
+    let oh="",av="",inc="",ac="",gnote="";
+    if(iv){
+      const hasSku=(iv.sku_ohd_lbs!=null||iv.sku_available_lbs!=null||iv.sku_incoming_lbs!=null);
+      if(hasSku){                                   // per-SKU inventory for this exact item
+        oh=iv.sku_ohd_lbs!=null?"On hand: "+wnum(iv.sku_ohd_lbs)+" "+wunit():"";
+        av=iv.sku_available_lbs!=null?"Available: "+wnum(iv.sku_available_lbs)+" "+wunit():"";
+        inc=iv.sku_incoming_lbs!=null?"Incoming: "+wnum(iv.sku_incoming_lbs)+" "+wunit():"";
+      } else if(iv.grade_available_lbs!=null||iv.on_order_lbs!=null){  // no SKU row -> grade-level
+        av=iv.grade_available_lbs!=null?"Available: "+wnum(iv.grade_available_lbs)+" "+wunit():"";
+        inc=iv.on_order_lbs!=null?"Incoming: "+wnum(iv.on_order_lbs)+" "+wunit():"";
+        gnote="grade "+iv.grade+" (no per-SKU record"+(iv.months_of_supply!=null?", "+iv.months_of_supply+" mo":"")+")";
+      }
+      ac=iv.avg_cost_cwt!=null?"Avg cost: $"+iv.avg_cost_cwt.toFixed(2)+"/cwt":"";
+    }
+    const posinfo=(oh||av||inc||ac||gnote)?'<div class="sub2">'+[oh,av,inc,ac,gnote].filter(Boolean).join(" · ")+"</div>":"";
     const item="<strong>"+r.description+pos+'</strong><div class="sub2">'+qtyInput+"</div>"+posinfo;
     if(r.manual_quote) return "<tr><td>"+item+'</td><td class="num">'+wnum(r.weight_lb)+"</td>"+
         '<td colspan="2"><span class="pill manual">Manual quote</span> <span class="bd">'+(r.note||"")+"</span></td>"+
