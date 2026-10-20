@@ -467,17 +467,19 @@ function fillThickness(){
   opts("dl_thickness", orderBy(DATA.products,"thickness"));
   fillGrade();
 }
+// Normalize a typed spec so "1-1/2", "1-1/2\"", "1 1/2" all match the stored "1-1/2\"".
+function normField(s){ return String(s==null?"":s).toLowerCase().replace(/["\s-]/g,""); }
 function fillGrade(){
-  const t=$("thickness").value.trim();
-  let base=DATA.products.filter(p=>p.thickness===t);
+  const t=normField($("thickness").value);
+  let base=DATA.products.filter(p=>normField(p.thickness)===t);
   if(!base.length) base=DATA.products;                 // no exact thickness yet -> suggest all grades
   const grades=uniq(base.map(p=>p.grade)).sort((a,b)=>String(a).localeCompare(String(b),undefined,{numeric:true}));
   opts("dl_grade", grades);
   fillWidth();
 }
 function fillWidth(){
-  const t=$("thickness").value.trim(),g=$("grade").value.trim();
-  let rows=DATA.products.filter(p=>(!t||p.thickness===t)&&(!g||p.grade===g));
+  const t=normField($("thickness").value),g=normField($("grade").value);
+  let rows=DATA.products.filter(p=>(!t||normField(p.thickness)===t)&&(!g||normField(p.grade)===g));
   if(!rows.length) rows=DATA.products;
   opts("dl_width", orderBy(rows,"width").filter(w=>w!=null&&w!==""));
 }
@@ -493,8 +495,8 @@ function unitChanged(){
 $("unit").onchange=unitChanged;
 
 function currentKey(){
-  const t=$("thickness").value,g=$("grade").value,w=$("width").value;
-  const row=DATA.products.find(p=>p.thickness===t&&p.grade===g&&String(p.width==null?"":p.width)===w);
+  const t=normField($("thickness").value),g=normField($("grade").value),w=normField($("width").value);
+  const row=DATA.products.find(p=>normField(p.thickness)===t&&normField(p.grade)===g&&normField(p.width==null?"":p.width)===w);
   return row?row.key:null;
 }
 function basis(){ return document.querySelector('input[name="basis"]:checked').value; }
