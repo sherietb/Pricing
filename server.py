@@ -286,11 +286,10 @@ def _inventory_watch(interval=600):
             print("Inventory auto-refresh skipped:", exc)
 
 
-def main():
-    port = int(sys.argv[1]) if len(sys.argv) > 1 else 8000
-    if not os.path.exists(db.DB_PATH):
-        print("No database found -- importing from workbook...")
-        db.import_from_workbook()
+def _warmup():
+    """Heavy startup work (live SQL inventory pull, cost derivation). Runs in the
+    background so the HTTP server starts listening immediately -- otherwise the
+    launcher opens the browser before the port is up and shows a connection error."""
     try:
         if inventory.db_available():
             print("Refreshing inventory live from SQL Server...")
@@ -304,8 +303,19 @@ def main():
         costing.ensure_costs()
     except Exception as exc:
         print("Costs not derived:", exc)
+
+
+def main():
+    port = int(sys.argv[1]) if len(sys.argv) > 1 else 8000
+    if not os.path.exists(db.DB_PATH):
+        print("No database found -- importing from workbook...")
+        db.import_from_workbook()
+    # Bind and start serving FIRST, then warm up inventory/costs in the background.
+    httpd = ThreadingHTTPServer(("0.0.0.0", port), Handler)
+    print("Server listening. Loading inventory in the background...")
+    threading.Thread(target=_warmup, daemon=True).start()
     threading.Thread(target=_inventory_watch, daemon=True).start()
-    ThreadingHTTPServer(("0.0.0.0", port), Handler).serve_forever()
+    httpd.serve_forever()
 
 
 if __name__ == "__main__":
