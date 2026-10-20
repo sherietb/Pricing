@@ -109,9 +109,9 @@
   <div class="card no-print quoteonly">
     <h2>Enter what you&rsquo;re quoting</h2>
     <div class="grid">
-      <div><label>Thickness</label><select id="thickness"></select></div>
-      <div><label>Grade</label><select id="grade"></select></div>
-      <div><label>Width</label><select id="width"></select></div>
+      <div><label>Thickness</label><input id="thickness" list="dl_thickness" autocomplete="off" placeholder="type or pick, e.g. 316, 14G"><datalist id="dl_thickness"></datalist></div>
+      <div><label>Grade</label><input id="grade" list="dl_grade" autocomplete="off" placeholder="type or pick, e.g. 36, 572-50"><datalist id="dl_grade"></datalist></div>
+      <div><label>Width</label><input id="width" list="dl_width" autocomplete="off" placeholder="type or pick, e.g. 60, 96"><datalist id="dl_width"></datalist></div>
       <div><label id="lengthlabel">Length (inches)</label><input id="length" type="number" min="0" step="0.25" value="120"></div>
       <div><label>Quantity</label><input id="qty" type="number" min="0" step="any" value="1"></div>
       <div><label>Priced by</label>
@@ -124,7 +124,6 @@
       </div>
     </div>
     <div class="checks">
-      <label><input type="checkbox" id="custom"> Custom-cut length</label>
       <span id="extras"></span>
     </div>
     <div class="row-actions">
@@ -460,24 +459,27 @@ function orderBy(prods,field){
      return String(a).localeCompare(String(b),undefined,{numeric:true});
   });
 }
+function opts(el,vals){ $(el).innerHTML=vals.map(v=>'<option value="'+String(v).replace(/"/g,"&quot;")+'">').join(""); }
 function fillThickness(){
-  $("thickness").innerHTML=orderBy(DATA.products,"thickness").map(t=>"<option>"+t+"</option>").join("");
+  opts("dl_thickness", orderBy(DATA.products,"thickness"));
   fillGrade();
 }
 function fillGrade(){
-  const t=$("thickness").value;
-  const grades=uniq(DATA.products.filter(p=>p.thickness===t).map(p=>p.grade))
-      .sort((a,b)=>String(a).localeCompare(String(b),undefined,{numeric:true}));
-  $("grade").innerHTML=grades.map(g=>"<option>"+g+"</option>").join("");
+  const t=$("thickness").value.trim();
+  let base=DATA.products.filter(p=>p.thickness===t);
+  if(!base.length) base=DATA.products;                 // no exact thickness yet -> suggest all grades
+  const grades=uniq(base.map(p=>p.grade)).sort((a,b)=>String(a).localeCompare(String(b),undefined,{numeric:true}));
+  opts("dl_grade", grades);
   fillWidth();
 }
 function fillWidth(){
-  const t=$("thickness").value,g=$("grade").value;
-  const rows=DATA.products.filter(p=>p.thickness===t&&p.grade===g);
-  $("width").innerHTML=orderBy(rows,"width").map(w=>"<option>"+(w===null?"":w)+"</option>").join("");
+  const t=$("thickness").value.trim(),g=$("grade").value.trim();
+  let rows=DATA.products.filter(p=>(!t||p.thickness===t)&&(!g||p.grade===g));
+  if(!rows.length) rows=DATA.products;
+  opts("dl_width", orderBy(rows,"width").filter(w=>w!=null&&w!==""));
 }
-$("thickness").onchange=fillGrade;
-$("grade").onchange=fillWidth;
+$("thickness").oninput=fillGrade;
+$("grade").oninput=fillWidth;
 
 function unitChanged(){
   // Length stays editable in every mode; it is simply ignored unless pricing by the piece.
@@ -502,7 +504,7 @@ function buildLine(){
   const unit=$("unit").value;
   const line={key,unit,qty:parseFloat($("qty").value),
       length_in:parseFloat($("length").value),
-      custom_length:$("custom").checked,
+      custom_length:false,
       extras:[...document.querySelectorAll(".ex:checked")].map(c=>c.value)};
   if(!(line.qty>0)){$("formmsg").textContent="Enter a positive quantity.";return null;}
   if(unit==="pieces"&&!(line.length_in>0)){$("formmsg").textContent="Enter a length (inches) for a per-piece quote.";return null;}
@@ -523,7 +525,6 @@ window.editLine=i=>{
          $("width").value=(p.width==null?"":p.width); }
   $("qty").value=line.qty; $("unit").value=line.unit; unitChanged();
   $("length").value=(line.length_in!=null?line.length_in:"");
-  $("custom").checked=!!line.custom_length;
   document.querySelectorAll(".ex").forEach(c=>{ c.checked=(line.extras||[]).includes(c.value); });
   EDITING=i; $("add").textContent="Update line "+(i+1); $("canceledit").style.display="";
   $("formmsg").textContent=""; window.scrollTo({top:0,behavior:"smooth"});
