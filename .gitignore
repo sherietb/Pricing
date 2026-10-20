@@ -25,5 +25,14 @@ _*.js
 # Customer list (proprietary)
 Customers.csv
 
+# Credit Statement Cycle D list (proprietary; drives high-risk credit flag)
+Credit Statement Cycle D.csv
+Credit Statement Cycle D.xlsx
+
+# Internal quote export outputs
+Quote Comparison *.xlsx
+Quote Comparison *.csv
+Customer Region Review.csv
+
 # Internal DB query + connection (proprietary)
 inventory_query.sql

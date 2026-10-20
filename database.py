@@ -18,6 +18,52 @@ import pricing_engine as pe
 HERE = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.path.join(HERE, "pricing.db")
 
+# High-risk credit is driven by Invex "Statement Cycle = D" (Customer Account ->
+# Credit control). That field is NOT in the SQL extracts, so it comes from a
+# maintained export dropped in the folder. Accepts .csv or .xlsx with a customer
+# name/number column; if a statement-cycle column is present, only rows == 'D' count
+# (otherwise every listed customer is treated as cycle D).
+CYCLE_D_FILE = os.environ.get("PRICING_CYCLE_D_FILE",
+                              os.path.join(HERE, "Credit Statement Cycle D.csv"))
+
+
+def high_risk_cycle_d():
+    """Return {normalized customer name -> True} for Statement-Cycle-D customers,
+    read from CYCLE_D_FILE (.csv or .xlsx). Empty if the file is absent/unreadable."""
+    path = CYCLE_D_FILE
+    if not os.path.exists(path):
+        alt = os.path.splitext(path)[0] + ".xlsx"
+        path = alt if os.path.exists(alt) else None
+    if not path:
+        return {}
+    rows = []
+    try:
+        if path.lower().endswith(".xlsx"):
+            import openpyxl
+            ws = openpyxl.load_workbook(path, data_only=True).active
+            data = list(ws.iter_rows(values_only=True))
+            if data:
+                hdr = [str(h or "").strip().lower() for h in data[0]]
+                rows = [dict(zip(hdr, r)) for r in data[1:]]
+        else:
+            import csv
+            with open(path, newline="", encoding="utf-8-sig") as f:
+                rows = [{(k or "").strip().lower(): v for k, v in r.items()}
+                        for r in csv.DictReader(f)]
+    except Exception:
+        return {}
+    name_keys = ("customer", "customer_name", "name", "account_name", "sold_to")
+    cyc_keys = ("statement_cycle", "statement cycle", "stmt_cycle", "cycle", "stmt cycle")
+    out = {}
+    for r in rows:
+        cyc = next((str(r[k]).strip().upper() for k in cyc_keys if k in r and r[k] is not None), None)
+        if cyc is not None and cyc != "D":
+            continue
+        nm = next((r[k] for k in name_keys if r.get(k)), None)
+        if nm:
+            out[_norm_name(str(nm))] = True
+    return out
+
 
 def latest_pricing_workbook():
     """Newest 'Pricing *.xlsx' in the app folder (ignores Excel ~$ lock files).
@@ -995,15 +1041,22 @@ def import_customers_from_db():
         regions = customer_region_map()      # name -> {region, zip, city, state}
     except Exception:
         pass
+    cycle_d = high_risk_cycle_d()            # {normalized name -> True} from the maintained list
     existing = {c["name"]: c for c in list_customers()}   # also runs the dyn_cwt migration
     conn = connect()
     conn.executescript(SCHEMA)
-    n = matched = regioned = 0
+    n = matched = regioned = high = 0
     for name, cs in rows:
         name = (name or "").strip()
         if not name:
             continue
-        credit = "high" if str(cs or "").strip().upper() == "H" else "low"
+        # High-risk = Invex Statement Cycle 'D' (from the maintained list), NOT credit_status.
+        if cycle_d:
+            credit = "high" if cycle_d.get(_norm_name(name)) else "low"
+        else:                                 # no list loaded yet: keep whatever was set before
+            credit = (existing.get(name) or {}).get("credit", "low")
+        if credit == "high":
+            high += 1
         ex = existing.get(name)
         seg = resolve_seg(name) if resolve_seg else None
         if seg:
@@ -1024,7 +1077,8 @@ def import_customers_from_db():
         n += 1
     conn.commit()
     conn.close()
-    return {"imported": n, "segmented": matched, "regioned": regioned}
+    return {"imported": n, "segmented": matched, "regioned": regioned,
+            "high_risk": high, "cycle_d_loaded": bool(cycle_d)}
 
 
 def import_customers_csv(path=None):
