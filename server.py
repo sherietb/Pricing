@@ -230,7 +230,9 @@ class Handler(BaseHTTPRequestHandler):
             product = db.get_product(line["key"])
             if not product:
                 return _offsheet_result(line)   # key no longer in the price list
-            inv = inventory.get_inventory_for(line["key"], product["grade"], rules) if rules else None
+            inv = inventory.get_inventory_for(
+                product["thickness"], product.get("width_num") or product.get("width"),
+                product["grade"], line.get("form"), rules) if rules else None
             adj = None
             if use_inv and inv and inv.get("adjustment_cwt"):
                 mos = inv.get("months_of_supply")

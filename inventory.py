@@ -55,7 +55,20 @@ CREATE TABLE IF NOT EXISTS inventory_sku_moh (
 );
 CREATE TABLE IF NOT EXISTS inv_rule (k TEXT PRIMARY KEY, v REAL);
 CREATE TABLE IF NOT EXISTS meta (k TEXT PRIMARY KEY, v TEXT);
+CREATE TABLE IF NOT EXISTS inventory_pos (
+    scope TEXT, key TEXT, grade TEXT, size TEXT, width TEXT, form TEXT,
+    ohd_lbs REAL, available_lbs REAL, incoming_lbs REAL, po_lbs REAL,
+    avg_cost_cwt REAL, months REAL, product_type TEXT,
+    PRIMARY KEY (scope, key)
+);
 """
+
+# Form -> how its inventory position is matched + which rule it uses.
+# Coil forms match on grade+width (fungible); discrete forms match an exact SKU.
+COIL_FORMS = ("CC", "FPCO")        # CC = cut coil (CTL), FPCO = floor-plate coil
+DISCRETE_FORMS = ("CP", "FP")      # CP = discrete plate, FP = floor-plate stock
+FORM_CLASS = {"CC": "coil", "FPCO": "coil", "CP": "disc", "FP": "disc"}
+FORM_PTYPE = {"CC": "ctl", "FPCO": "plate", "CP": "plate", "FP": "plate"}
 
 
 def connect():
@@ -266,7 +279,12 @@ def import_inventory_from_db():
         except (TypeError, ValueError):
             return 0.0
 
+    def _blank():
+        return {"ohd": 0.0, "res": 0.0, "inc": 0.0, "po": 0.0, "cst_lbs": 0.0,
+                "cons6": 0.0, "cons1": 0.0, "grade": None, "size": None, "width": None, "form": None}
+
     det = {}
+    coil_acc, disc_acc = {}, {}     # form-aware: coil keyed grade|width, discrete keyed thk-width-grade
     for r in rows:
         grade, size, w = r[i["grade"]], r[i["size"]], r[i["W"]]
         if grade is None or size is None or w is None:
@@ -277,23 +295,39 @@ def import_inventory_from_db():
         except ValueError:
             pass
         g = _norm_grade(grade)
-        key = "-".join(p for p in (str(size).strip(), width, g) if p)
-        d = det.setdefault(key, {"grade": g, "size": str(size).strip(), "width": width,
+        size_s = str(size).strip()
+        key = "-".join(p for p in (size_s, width, g) if p)
+        form = str(r[i["form"]] or "").strip().upper()
+        ohd, po = n(r[i["ohd_lbs"]]), n(r[i["po_lbs_tot"]])
+        res = n(r[i["tot_res_lbs"]]); inc = n(r[i["incoming_lbs"]])
+        cst_lbs = n(r[i["ohd_cst"]]) * ohd
+        cons6 = sum(n(r[i[c]]) for c in monthly_cols)
+        cons1 = n(r[i["Tot_C_1M"]]) if "Tot_C_1M" in i else 0.0
+
+        d = det.setdefault(key, {"grade": g, "size": size_s, "width": width,
                                  "ohd": 0.0, "res": 0.0, "inc": 0.0, "po": 0.0, "cst_lbs": 0.0,
                                  "cc": 0.0, "fpco": 0.0, "cons6": 0.0, "cons1": 0.0})
-        ohd, po = n(r[i["ohd_lbs"]]), n(r[i["po_lbs_tot"]])
-        d["ohd"] += ohd
-        d["res"] += n(r[i["tot_res_lbs"]])
-        d["inc"] += n(r[i["incoming_lbs"]])
-        d["po"] += po
-        d["cst_lbs"] += n(r[i["ohd_cst"]]) * ohd
-        d["cons6"] += sum(n(r[i[c]]) for c in monthly_cols)     # 6 monthly totals
-        d["cons1"] += n(r[i["Tot_C_1M"]]) if "Tot_C_1M" in i else 0.0
-        fw = ohd + po
-        if str(r[i["form"]] or "").strip().upper() == "FPCO":
-            d["fpco"] += fw
+        d["ohd"] += ohd; d["res"] += res; d["inc"] += inc; d["po"] += po
+        d["cst_lbs"] += cst_lbs; d["cons6"] += cons6; d["cons1"] += cons1
+        if form == "FPCO":
+            d["fpco"] += ohd + po
         else:
-            d["cc"] += fw
+            d["cc"] += ohd + po
+
+        # form-aware accumulation: coil forms -> grade|width, discrete forms -> exact SKU
+        cls = FORM_CLASS.get(form)
+        if cls == "coil":
+            a = coil_acc.setdefault(g + "|" + width, _blank())
+            a["grade"], a["width"] = g, width
+        elif cls == "disc":
+            a = disc_acc.setdefault(key, _blank())
+            a["grade"], a["size"], a["width"] = g, size_s, width
+        else:
+            a = None
+        if a is not None:
+            a["ohd"] += ohd; a["res"] += res; a["inc"] += inc; a["po"] += po
+            a["cst_lbs"] += cst_lbs; a["cons6"] += cons6; a["cons1"] += cons1
+            a["form"] = form
 
     sku_rows, sku_moh_rows, grade_acc = [], [], {}
     for k, d in det.items():
@@ -309,15 +343,35 @@ def import_inventory_from_db():
         a["ohd"] += d["ohd"]; a["avail"] += avail; a["po"] += d["po"]; a["c1"] += d["cons1"]; a["c6"] += monthly; a["fc"] += monthly; a["n"] += 1
     grade_rows = [(g, a["ohd"], a["avail"], a["po"], a["c1"], a["c6"], a["fc"], 0.0) for g, a in grade_acc.items()]
 
+    def _months(ohd, po, monthly):
+        tot = ohd + po
+        if monthly and monthly > 0:
+            return round(min(tot / monthly, 12.0), 1)
+        return 12.0 if tot > 0 else 0.0
+
+    def _pos_rows(acc, scope):
+        out = []
+        for k, a in acc.items():
+            avail = a["ohd"] - a["res"]
+            monthly = a["cons6"] / (len(monthly_cols) or 1)
+            cost = round(a["cst_lbs"] / a["ohd"], 2) if a["ohd"] > 0 else None
+            ptype = FORM_PTYPE.get((a.get("form") or "").upper(), "ctl")
+            out.append((scope, k, a.get("grade"), a.get("size"), a.get("width"), a.get("form"),
+                        a["ohd"], avail, a["inc"], a["po"], cost,
+                        _months(a["ohd"], a["po"], monthly), ptype))
+        return out
+    pos_rows = _pos_rows(coil_acc, "coil") + _pos_rows(disc_acc, "sku")
+
     conn = connect()
     conn.execute("DROP TABLE IF EXISTS inventory_sku")
     conn.execute("DROP TABLE IF EXISTS inventory_sku_moh")
     conn.executescript(SCHEMA)
-    for t in ("inventory_sku", "inventory_grade", "inventory_sku_moh"):
+    for t in ("inventory_sku", "inventory_grade", "inventory_sku_moh", "inventory_pos"):
         conn.execute("DELETE FROM " + t)
     conn.executemany("INSERT OR REPLACE INTO inventory_sku VALUES (?,?,?,?,?,?,?,?,?,?,?)", sku_rows)
     conn.executemany("INSERT OR REPLACE INTO inventory_grade VALUES (?,?,?,?,?,?,?,?)", grade_rows)
     conn.executemany("INSERT OR REPLACE INTO inventory_sku_moh VALUES (?,?,?,?,?,?,?,?)", sku_moh_rows)
+    conn.executemany("INSERT OR REPLACE INTO inventory_pos VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)", pos_rows)
     now = datetime.now(timezone.utc).isoformat(timespec="seconds")
     conn.execute("INSERT OR REPLACE INTO meta VALUES ('last_inventory_import', ?)", (now,))
     conn.execute("INSERT OR REPLACE INTO meta VALUES ('inv_source_mtime', ?)", (str(datetime.now().timestamp()),))
@@ -398,46 +452,53 @@ def get_meta():
             "as_of": as_of, "days_old": days_old, "stale": stale, "stale_days": STALE_DAYS}
 
 
-def get_inventory_for(key, grade, rules=None):
+def _wkey(width):
+    try:
+        return str(int(float(width)))
+    except (TypeError, ValueError):
+        return str(width).strip()
+
+
+def get_inventory_for(thickness, width, grade, form=None, rules=None):
+    """Form-aware inventory position. Coil forms (CC/FPCO) match on grade+width;
+    discrete forms (CP/FP) match an exact SKU (thickness+width+grade). No matching
+    stock on hand -> the position defaults to SHORT (never a grade-level fallback)."""
     rules = rules or get_rules()
+    form = (form or "").strip().upper()
+    cls = FORM_CLASS.get(form)
+    if cls is None:   # no explicit form: coil for gauges, discrete (plate) otherwise
+        cls = "coil" if str(thickness).strip().upper().endswith("G") else "disc"
+    scope = "coil" if cls == "coil" else "sku"
+    wk = _wkey(width)
+    poskey = (grade + "|" + wk) if scope == "coil" else \
+        "-".join(p for p in (str(thickness).strip(), wk, grade) if p)
     conn = connect()
     try:
-        sku = conn.execute("SELECT * FROM inventory_sku WHERE key=?", (key,)).fetchone()
-        gr = conn.execute("SELECT * FROM inventory_grade WHERE grade=?", (grade,)).fetchone()
-        smoh = conn.execute("SELECT * FROM inventory_sku_moh WHERE key=?", (key,)).fetchone()
+        rec = conn.execute("SELECT * FROM inventory_pos WHERE scope=? AND key=?",
+                           (scope, poskey)).fetchone()
     except sqlite3.OperationalError:
         conn.close(); return None
     conn.close()
-    if not sku and not gr and not smoh:
-        return None
-    ptype = (sku["product_type"] if sku and sku["product_type"] else "ctl")   # CTL vs discrete plate
+    ptype = FORM_PTYPE.get(form, "ctl" if cls == "coil" else "plate")
     rule = rules.get(ptype, rules["ctl"])
-    # Prefer the MOH sheet's on-hand/available (what the CCO reads); fall back to Details.
-    out = {"grade": grade, "product_type": ptype,
-           "sku_ohd_lbs": round(smoh["ohd_lbs"]) if smoh else (round(sku["ohd_lbs"]) if sku else None),
-           "sku_available_lbs": round(smoh["avail_lbs"]) if smoh else (round(sku["available_lbs"]) if sku else None),
-           "avg_cost_cwt": (sku["avg_cost_cwt"] if sku and sku["avg_cost_cwt"] else None),
-           "sku_incoming_lbs": (round(sku["incoming_lbs"]) if sku and sku["incoming_lbs"] else None),
-           "grade_available_lbs": None, "on_order_lbs": None, "months_of_supply": None,
-           "position": "unknown", "adjustment_cwt": 0.0, "basis": None}
-    if smoh is not None:
-        # Per-SKU months-on-hand = projected W1 lbs / monthly forecast (matches the sheet's W1 MOH);
-        # dead stock (no forecast) caps at 12, mirroring the sheet.
-        fc, w1 = smoh["forecast"], smoh["w1_lbs"]
-        if fc and fc > 0:
-            mos = round(min(w1 / fc, 12.0), 1)
-        else:
-            mos = 12.0 if (w1 > 0 or smoh["ohd_lbs"] > 0) else 0.0
-        pos, adj = classify(mos, rule)
-        out.update({"months_of_supply": mos, "position": pos, "adjustment_cwt": round(adj, 2),
-                    "on_order_lbs": round(smoh["po_lbs"]), "basis": "sku"})
-    elif gr:
-        # Fall back to grade-level projected months when this SKU has no per-SKU MOH row
-        mos = projected_months(gr)
-        pos, adj = classify(mos, rule)
-        out.update({"grade_available_lbs": round(gr["avail_lbs"]), "on_order_lbs": round(gr["po_lbs"]),
-                    "months_of_supply": mos, "position": pos, "adjustment_cwt": round(adj, 2), "basis": "grade"})
-    return out
+    if rec is None:
+        # No stock on hand for this item -> SHORT.
+        pos, adj = classify(0.0, rule)
+        return {"grade": grade, "product_type": ptype, "form": form or None,
+                "match_scope": scope, "matched": False,
+                "sku_ohd_lbs": 0, "sku_available_lbs": 0, "avg_cost_cwt": None,
+                "sku_incoming_lbs": None, "months_of_supply": 0.0,
+                "position": pos, "adjustment_cwt": round(adj, 2), "basis": "no-stock"}
+    mos = rec["months"] if rec["months"] is not None else 0.0
+    pos, adj = classify(mos, rule)
+    return {"grade": grade, "product_type": ptype, "form": rec["form"] or form or None,
+            "match_scope": scope, "matched": True,
+            "sku_ohd_lbs": round(rec["ohd_lbs"]) if rec["ohd_lbs"] is not None else None,
+            "sku_available_lbs": round(rec["available_lbs"]) if rec["available_lbs"] is not None else None,
+            "avg_cost_cwt": rec["avg_cost_cwt"],
+            "sku_incoming_lbs": round(rec["incoming_lbs"]) if rec["incoming_lbs"] else None,
+            "months_of_supply": mos, "position": pos, "adjustment_cwt": round(adj, 2),
+            "basis": ("coil (grade+width)" if scope == "coil" else "sku")}
 
 
 if __name__ == "__main__":

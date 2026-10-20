@@ -111,6 +111,13 @@
     <div class="grid">
       <div><label>Thickness</label><input id="thickness" type="text" list="dl_thickness" autocomplete="off" placeholder="type or pick, e.g. 316, 14G"><datalist id="dl_thickness"></datalist></div>
       <div><label>Grade</label><input id="grade" type="text" list="dl_grade" autocomplete="off" placeholder="type or pick, e.g. 36, 572-50"><datalist id="dl_grade"></datalist></div>
+      <div><label>Form</label><select id="form">
+        <option value="">Auto (by thickness)</option>
+        <option value="CC">CC — Cut coil (CTL)</option>
+        <option value="CP">CP — Discrete plate</option>
+        <option value="FPCO">FPCO — Floor plate (coil)</option>
+        <option value="FP">FP — Floor plate (stock)</option>
+      </select></div>
       <div><label>Width</label><input id="width" type="text" list="dl_width" autocomplete="off" placeholder="type or pick, e.g. 60, 96"><datalist id="dl_width"></datalist></div>
       <div><label id="lengthlabel">Length (inches)</label><input id="length" type="number" min="0" step="0.25" value="120"></div>
       <div><label>Quantity</label><input id="qty" type="number" min="0" step="any" value="1"></div>
@@ -516,11 +523,12 @@ function buildLine(){
   const extras=[...document.querySelectorAll(".ex:checked")].map(c=>c.value);
   if(!(qty>0)){$("formmsg").textContent="Enter a positive quantity.";return null;}
   if(unit==="pieces"&&!(length_in>0)){$("formmsg").textContent="Enter a length (inches) for a per-piece quote.";return null;}
-  if(key) return {key,unit,qty,length_in,custom_length:false,extras};
+  const form=$("form")?$("form").value:"";
+  if(key) return {key,unit,qty,length_in,custom_length:false,extras,form};
   // Not on the price sheet -> allow it anyway at $0 with a flag.
   const thickness=$("thickness").value.trim(),grade=$("grade").value.trim(),width=$("width").value.trim();
   if(!thickness&&!grade&&!width){$("formmsg").textContent="Enter thickness, grade, and/or width.";return null;}
-  return {offsheet:true,thickness,grade,width,unit,qty,length_in,custom_length:false,extras};
+  return {offsheet:true,thickness,grade,width,unit,qty,length_in,custom_length:false,extras,form};
 }
 $("add").onclick=async()=>{
   $("formmsg").textContent="";
@@ -538,6 +546,7 @@ window.editLine=i=>{
   else if(line.offsheet){ $("thickness").value=line.thickness||""; fillGrade();
          $("grade").value=line.grade||""; fillWidth(); $("width").value=line.width||""; }
   $("qty").value=line.qty; $("unit").value=line.unit; unitChanged();
+  if($("form")) $("form").value=line.form||"";
   $("length").value=(line.length_in!=null?line.length_in:"");
   document.querySelectorAll(".ex").forEach(c=>{ c.checked=(line.extras||[]).includes(c.value); });
   EDITING=i; $("add").textContent="Update line "+(i+1); $("canceledit").style.display="";
@@ -573,21 +582,12 @@ async function refresh(){
     if(r.error) return '<tr><td>'+(r.key||"")+'</td><td colspan="4" class="msg err">'+r.error+"</td>"+x+"</tr>";
     const iv=r.inventory;
     const pos=(iv&&iv.position&&iv.position!=="unknown")?' <span class="pos '+iv.position+'">'+iv.position+"</span>":"";
-    let oh="",av="",inc="",ac="",gnote="";
-    if(iv){
-      const hasSku=(iv.sku_ohd_lbs!=null||iv.sku_available_lbs!=null||iv.sku_incoming_lbs!=null);
-      if(hasSku){                                   // per-SKU inventory for this exact item
-        oh=iv.sku_ohd_lbs!=null?"On hand: "+wnum(iv.sku_ohd_lbs)+" "+wunit():"";
-        av=iv.sku_available_lbs!=null?"Available: "+wnum(iv.sku_available_lbs)+" "+wunit():"";
-        inc=iv.sku_incoming_lbs!=null?"Incoming: "+wnum(iv.sku_incoming_lbs)+" "+wunit():"";
-      } else if(iv.grade_available_lbs!=null||iv.on_order_lbs!=null){  // no SKU row -> grade-level
-        av=iv.grade_available_lbs!=null?"Available: "+wnum(iv.grade_available_lbs)+" "+wunit():"";
-        inc=iv.on_order_lbs!=null?"Incoming: "+wnum(iv.on_order_lbs)+" "+wunit():"";
-        gnote="grade "+iv.grade+" (no per-SKU record"+(iv.months_of_supply!=null?", "+iv.months_of_supply+" mo":"")+")";
-      }
-      ac=iv.avg_cost_cwt!=null?"Avg cost: $"+iv.avg_cost_cwt.toFixed(2)+"/cwt":"";
-    }
-    const posinfo=(oh||av||inc||ac||gnote)?'<div class="sub2">'+[oh,av,inc,ac,gnote].filter(Boolean).join(" · ")+"</div>":"";
+    const nostock=(iv&&iv.basis==="no-stock");
+    const oh=nostock?"No stock on hand":(iv&&iv.sku_ohd_lbs!=null?"On hand: "+wnum(iv.sku_ohd_lbs)+" "+wunit():"");
+    const av=(!nostock&&iv&&iv.sku_available_lbs!=null)?"Available: "+wnum(iv.sku_available_lbs)+" "+wunit():"";
+    const inc=(!nostock&&iv&&iv.sku_incoming_lbs!=null)?"Incoming: "+wnum(iv.sku_incoming_lbs)+" "+wunit():"";
+    const ac=(!nostock&&iv&&iv.avg_cost_cwt!=null)?"Avg cost: $"+iv.avg_cost_cwt.toFixed(2)+"/cwt":"";
+    const posinfo=(oh||av||inc||ac)?'<div class="sub2">'+[oh,av,inc,ac].filter(Boolean).join(" · ")+"</div>":"";
     const item="<strong>"+r.description+pos+'</strong><div class="sub2">'+qtyInput+"</div>"+posinfo;
     if(r.manual_quote) return "<tr><td>"+item+'</td><td class="num">'+wnum(r.weight_lb)+"</td>"+
         '<td colspan="2"><span class="pill manual">Manual quote</span> <span class="bd">'+(r.note||"")+"</span></td>"+
