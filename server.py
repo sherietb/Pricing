@@ -236,8 +236,8 @@ class Handler(BaseHTTPRequestHandler):
             adj = None
             if use_inv and inv and inv.get("adjustment_cwt"):
                 mos = inv.get("months_of_supply")
-                ptype = (inv.get("product_type") or "").upper()
-                label = "Inventory" + (" (" + ptype + ")" if ptype else "") + ": " + inv["position"]
+                tag = (inv.get("form") or inv.get("product_type") or "").upper()
+                label = "Inventory" + (" (" + tag + ")" if tag else "") + ": " + inv["position"]
                 if mos is not None:
                     label += f" ({mos} mo)"
                 adj = {"label": label, "cwt": inv["adjustment_cwt"]}

@@ -459,15 +459,30 @@ def _wkey(width):
         return str(width).strip()
 
 
+def default_form(thickness, grade, width):
+    """Default form when the rep leaves Form = Auto.
+      786 grade (floor plate): <=1/2" thick AND <=84" wide -> FPCO (coil), else FP (stock).
+      otherwise:               <1/2"  thick AND <=84" wide -> CC (coil),  else CP (plate)."""
+    import pricing_engine as pe
+    tin = pe.thickness_to_inch(thickness) or 0.0
+    try:
+        wn = float(width)
+    except (TypeError, ValueError):
+        wn = pe.width_to_number(width) or 0.0
+    if "786" in str(grade or ""):
+        return "FPCO" if (tin <= 0.5 and wn <= 84) else "FP"
+    return "CC" if (tin < 0.5 and wn <= 84) else "CP"
+
+
 def get_inventory_for(thickness, width, grade, form=None, rules=None):
     """Form-aware inventory position. Coil forms (CC/FPCO) match on grade+width;
     discrete forms (CP/FP) match an exact SKU (thickness+width+grade). No matching
     stock on hand -> the position defaults to SHORT (never a grade-level fallback)."""
     rules = rules or get_rules()
     form = (form or "").strip().upper()
-    cls = FORM_CLASS.get(form)
-    if cls is None:   # no explicit form: coil for gauges, discrete (plate) otherwise
-        cls = "coil" if str(thickness).strip().upper().endswith("G") else "disc"
+    if form not in FORM_CLASS:          # Auto -> default by thickness/width/grade
+        form = default_form(thickness, grade, width)
+    cls = FORM_CLASS.get(form, "disc")
     scope = "coil" if cls == "coil" else "sku"
     wk = _wkey(width)
     poskey = (grade + "|" + wk) if scope == "coil" else \
