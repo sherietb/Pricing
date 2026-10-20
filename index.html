@@ -432,7 +432,16 @@ async function boot(){
 }
 function showCustNote(){
   const c=(DATA.customers||[]).find(x=>x.name===$("custselect").value);
-  $("custnote").textContent=c?("Playbook "+c.playbook+" · "+(c.credit==="high"?"High risk":"Low risk")+(c.segment?" · "+c.segment:"")+(c.dyn_cwt?" · dynamic +$"+(+c.dyn_cwt).toFixed(2)+"/cwt":"")):"";
+  $("custnote").textContent=c?("Playbook "+c.playbook+" · "+(c.credit==="high"?"High risk":"Low risk")+(c.segment?" · "+c.segment:"")+(c.region?" · "+c.region:"")+(c.dyn_cwt?" · dynamic +$"+(+c.dyn_cwt).toFixed(2)+"/cwt":"")):"";
+}
+function applyCustomerRegion(){
+  // auto-set the region from the selected customer's ship-to (rep can still override)
+  const c=(DATA.customers||[]).find(x=>x.name===$("custselect").value);
+  const d=$("dest"); if(!c||!c.region||!d) return;
+  if([...d.options].some(o=>o.value===c.region)){
+    d.value=c.region;
+    if($("destnote")) $("destnote").textContent="auto-set from "+c.name+"’s ship-to";
+  }
 }
 function orderBy(prods,field){
   const m=new Map();
@@ -581,9 +590,9 @@ $("reimport").onclick=async()=>{
   else{m.className="msg ok";m.textContent="Imported "+r.imported.products+" products.";await boot();}
 };
 if($("useinv")) $("useinv").onchange=refresh;
-$("dest").onchange=refresh;
+$("dest").onchange=()=>{ if($("destnote")) $("destnote").textContent=""; refresh(); };
 $("regionmode").onchange=refresh;
-$("custselect").onchange=()=>{showCustNote();refresh();};
+$("custselect").onchange=()=>{applyCustomerRegion();showCustNote();refresh();};
 $("cu_save").onclick=async()=>{
   const body={name:$("cu_name").value,segment:$("cu_segment").value,playbook:parseInt($("cu_playbook").value),credit:$("cu_credit").value};
   const r=await (await fetch("/api/admin/customer",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)})).json();

@@ -48,6 +48,100 @@ REGIONS = [
     {"region": "West TX",          "freight_cwt": 2.55, "comp_cwt": 2.00},
 ]
 
+# 3-digit ZIP prefix -> region. TX/OK freight-market defaults; EDIT to match your
+# boundary calls (central-TX and south-OK zips are judgment calls, flagged for review).
+ZIP3_REGION = {
+    # DFW / North-Central TX
+    "750": "DFW", "751": "DFW", "752": "DFW", "753": "DFW", "754": "DFW",
+    "760": "DFW", "761": "DFW", "762": "DFW", "763": "DFW", "764": "DFW",
+    "765": "DFW", "766": "DFW", "767": "DFW",
+    # East TX
+    "755": "East TX", "756": "East TX", "757": "East TX", "758": "East TX", "759": "East TX",
+    # West TX / Panhandle
+    "768": "West TX", "769": "West TX", "790": "West TX", "791": "West TX", "792": "West TX",
+    "793": "West TX", "794": "West TX", "795": "West TX", "796": "West TX", "797": "West TX",
+    "798": "West TX", "799": "West TX", "733": "West TX",
+    # Houston / South TX (Gulf, San Antonio, Austin, Valley)
+    "770": "Houston/South TX", "771": "Houston/South TX", "772": "Houston/South TX",
+    "773": "Houston/South TX", "774": "Houston/South TX", "775": "Houston/South TX",
+    "776": "Houston/South TX", "777": "Houston/South TX", "778": "Houston/South TX",
+    "779": "Houston/South TX", "780": "Houston/South TX", "781": "Houston/South TX",
+    "782": "Houston/South TX", "783": "Houston/South TX", "784": "Houston/South TX",
+    "785": "Houston/South TX", "786": "Houston/South TX", "787": "Houston/South TX",
+    "788": "Houston/South TX", "789": "Houston/South TX",
+    # Oklahoma City side
+    "730": "OKC", "731": "OKC", "734": "OKC", "735": "OKC", "736": "OKC",
+    "737": "OKC", "738": "OKC", "739": "OKC", "747": "OKC", "748": "OKC",
+    # Tulsa side
+    "740": "Tulsa", "741": "Tulsa", "743": "Tulsa", "744": "Tulsa",
+    "745": "Tulsa", "746": "Tulsa", "749": "Tulsa",
+}
+
+# City/state fallback when a delivery ZIP isn't on file (upper-cased city -> region).
+CITY_REGION = {
+    ("FORT WORTH", "TX"): "DFW", ("DALLAS", "TX"): "DFW", ("ARLINGTON", "TX"): "DFW",
+    ("ALVARADO", "TX"): "DFW", ("DENISON", "TX"): "DFW", ("ROYSE CITY", "TX"): "DFW",
+    ("TERRELL", "TX"): "DFW", ("SUMNER", "TX"): "DFW", ("CLEBURNE", "TX"): "DFW",
+    ("KILGORE", "TX"): "East TX", ("LONGVIEW", "TX"): "East TX", ("TYLER", "TX"): "East TX",
+    ("HOUSTON", "TX"): "Houston/South TX", ("SAN ANTONIO", "TX"): "Houston/South TX",
+    ("MIDLAND", "TX"): "West TX", ("ODESSA", "TX"): "West TX", ("LUBBOCK", "TX"): "West TX",
+    ("ABILENE", "TX"): "West TX", ("AMARILLO", "TX"): "West TX",
+    ("OKLAHOMA CITY", "OK"): "OKC", ("TULSA", "OK"): "Tulsa",
+}
+
+
+def region_for_zip(zipcode):
+    z = "".join(ch for ch in str(zipcode or "") if ch.isdigit())[:5]
+    return ZIP3_REGION.get(z[:3]) if len(z) >= 3 else None
+
+
+def region_for_location(zipcode=None, city=None, state=None):
+    r = region_for_zip(zipcode)
+    if r:
+        return r
+    if city and state:
+        return CITY_REGION.get((city.strip().upper(), state.strip().upper()))
+    return None
+
+
+def customer_region_map():
+    """{customer name -> {region, zip, city, state}} from each customer's DOMINANT
+    ship-to location. ZIP (salesforce_billings) preferred; falls back to city/state
+    (salesforce_bookings_so). Region resolved via ZIP3_REGION / CITY_REGION."""
+    import pyodbc
+    cn = pyodbc.connect(CUST_DB_CONN, timeout=60); cur = cn.cursor()
+    out = {}
+    # dominant delivery ZIP per customer
+    cur.execute("""WITH z AS (
+        SELECT LTRIM(RTRIM(customer)) nm, LEFT(LTRIM(RTRIM(delivery_zip_code)),5) zip, COUNT(*) n,
+               ROW_NUMBER() OVER (PARTITION BY LTRIM(RTRIM(customer)) ORDER BY COUNT(*) DESC) rn
+        FROM dbo.salesforce_billings
+        WHERE customer IS NOT NULL AND delivery_zip_code IS NOT NULL
+        GROUP BY LTRIM(RTRIM(customer)), LEFT(LTRIM(RTRIM(delivery_zip_code)),5))
+        SELECT nm, zip FROM z WHERE rn = 1""")
+    for nm, zp in cur.fetchall():
+        if nm:
+            out[nm] = {"zip": zp, "city": None, "state": None,
+                       "region": region_for_zip(zp)}
+    # dominant ship-to city/state per customer (fills gaps / fallback)
+    cur.execute("""WITH c AS (
+        SELECT LTRIM(RTRIM(customer)) nm, LTRIM(RTRIM(ship_to_city)) city,
+               LTRIM(RTRIM(ship_to_state)) st, COUNT(*) n,
+               ROW_NUMBER() OVER (PARTITION BY LTRIM(RTRIM(customer)) ORDER BY COUNT(*) DESC) rn
+        FROM dbo.salesforce_bookings_so
+        WHERE customer IS NOT NULL
+        GROUP BY LTRIM(RTRIM(customer)), LTRIM(RTRIM(ship_to_city)), LTRIM(RTRIM(ship_to_state)))
+        SELECT nm, city, st FROM c WHERE rn = 1""")
+    for nm, city, st in cur.fetchall():
+        if not nm:
+            continue
+        rec = out.setdefault(nm, {"zip": None, "city": city, "state": st, "region": None})
+        rec["city"], rec["state"] = city, st
+        if not rec.get("region"):
+            rec["region"] = region_for_location(rec.get("zip"), city, st)
+    cn.close()
+    return out
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS products (
     key         TEXT PRIMARY KEY,
@@ -70,7 +164,7 @@ CREATE TABLE IF NOT EXISTS quotes (
 );
 CREATE TABLE IF NOT EXISTS customers (
     name TEXT PRIMARY KEY, segment TEXT, playbook INTEGER, credit TEXT,
-    dyn_cwt REAL DEFAULT 0
+    dyn_cwt REAL DEFAULT 0, region TEXT
 );
 CREATE TABLE IF NOT EXISTS cust_config (k TEXT PRIMARY KEY, v REAL);
 """
@@ -341,7 +435,7 @@ def list_customers():
     conn = connect()
     conn.executescript(SCHEMA)
     rows = [dict(r) for r in conn.execute(
-        "SELECT name, segment, playbook, credit, COALESCE(dyn_cwt,0) dyn_cwt "
+        "SELECT name, segment, playbook, credit, COALESCE(dyn_cwt,0) dyn_cwt, region "
         "FROM customers ORDER BY name")]
     conn.close()
     return rows
@@ -426,6 +520,8 @@ def _ensure_quote_status():
     ccols = {r[1] for r in conn.execute("PRAGMA table_info(customers)")}
     if "dyn_cwt" not in ccols:
         conn.execute("ALTER TABLE customers ADD COLUMN dyn_cwt REAL DEFAULT 0")
+    if "region" not in ccols:
+        conn.execute("ALTER TABLE customers ADD COLUMN region TEXT")
     conn.execute("CREATE TABLE IF NOT EXISTS dash_config (k TEXT PRIMARY KEY, v REAL)")
     conn.commit()
     conn.close()
@@ -894,10 +990,15 @@ def import_customers_from_db():
         _, resolve_seg = erp_segment_map()   # resolve(name) -> dim_seg
     except Exception:
         pass
+    regions = {}
+    try:
+        regions = customer_region_map()      # name -> {region, zip, city, state}
+    except Exception:
+        pass
     existing = {c["name"]: c for c in list_customers()}   # also runs the dyn_cwt migration
     conn = connect()
     conn.executescript(SCHEMA)
-    n = matched = 0
+    n = matched = regioned = 0
     for name, cs in rows:
         name = (name or "").strip()
         if not name:
@@ -909,15 +1010,21 @@ def import_customers_from_db():
             matched += 1
         else:                                 # keep any prior/admin segment if no ERP match
             seg = ex["segment"] if ex else ""
+        region = (regions.get(name) or {}).get("region")
+        if region:
+            regioned += 1
+        else:                                 # keep any prior/admin region if unresolved
+            region = ex.get("region") if ex else None
         # ON CONFLICT preserves each customer's dyn_cwt (their earned margin history).
         conn.execute(
-            "INSERT INTO customers (name, segment, playbook, credit) VALUES (?,?,?,?) "
-            "ON CONFLICT(name) DO UPDATE SET credit=excluded.credit, segment=excluded.segment",
-            (name, seg, ex["playbook"] if ex else 2, credit))
+            "INSERT INTO customers (name, segment, playbook, credit, region) VALUES (?,?,?,?,?) "
+            "ON CONFLICT(name) DO UPDATE SET credit=excluded.credit, segment=excluded.segment, "
+            "region=excluded.region",
+            (name, seg, ex["playbook"] if ex else 2, credit, region))
         n += 1
     conn.commit()
     conn.close()
-    return {"imported": n, "segmented": matched}
+    return {"imported": n, "segmented": matched, "regioned": regioned}
 
 
 def import_customers_csv(path=None):
