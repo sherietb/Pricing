@@ -35,8 +35,13 @@ COLUMNS = [
     ("Credit", "adder"), ("Dynamic margin", "adder"),
     ("Custom-length adder", "adder"), ("Extras", "adder"),
 ]
+HIST_COLUMNS = [
+    ("Last sold $/cwt", "hist"), ("Last sold date", "hist"),
+    ("Last quote $/cwt", "hist"), ("Last quote outcome", "hist"), ("Last quote date", "hist"),
+]
+HIST_WIDTHS = [13, 13, 14, 16, 13]
 GROUP_FILL = {"prod": "EEF2FF", "wt": "ECFEFF", "inv": "F0FDF4",
-              "price": "FEF9C3", "adder": "F8FAFC", "id": "FFFFFF"}
+              "price": "FEF9C3", "adder": "F8FAFC", "id": "FFFFFF", "hist": "FFF7ED"}
 
 
 def _adder_column(label):
@@ -122,7 +127,7 @@ def build_journal_workbook(rows):
     return buf.getvalue()
 
 
-def build_workbook(payload, result, get_product, playbook=2, pb_adder=0.0):
+def build_workbook(payload, result, get_product, playbook=2, pb_adder=0.0, history=None):
     """Return .xlsx bytes for a computed quote.
 
     payload : the quote request ({lines, customer_name, destination, ...})
@@ -130,11 +135,14 @@ def build_workbook(payload, result, get_product, playbook=2, pb_adder=0.0):
     get_product : callable key -> product dict
     playbook / pb_adder : the selected customer's playbook tier (1/2/3) and its $/cwt
                           adder, shown on each priced line.
+    history : optional list (aligned with lines) of {sold:[...], quoted:[...]}; when
+              given, the last sold/quoted columns are added.
     """
+    columns = list(COLUMNS) + (HIST_COLUMNS if history is not None else [])
     wb = openpyxl.Workbook()
     ws = wb.active
     ws.title = "Quote detail"
-    headers = [h for h, _ in COLUMNS]
+    headers = [h for h, _ in columns]
     col_of = {h: i + 1 for i, h in enumerate(headers)}
     thin = Side(style="thin", color="D0D7E2")
     border = Border(left=thin, right=thin, top=thin, bottom=thin)
@@ -157,7 +165,7 @@ def build_workbook(payload, result, get_product, playbook=2, pb_adder=0.0):
 
     # header row
     hr = 3
-    for i, (h, grp) in enumerate(COLUMNS, 1):
+    for i, (h, grp) in enumerate(columns, 1):
         cell = ws.cell(hr, i, h)
         cell.font = Font(bold=True, color="FFFFFF", size=10)
         cell.fill = PatternFill("solid", fgColor=BLUE)
@@ -216,6 +224,18 @@ def build_workbook(payload, result, get_product, playbook=2, pb_adder=0.0):
         if res.get("manual_quote"):
             row["Suggested $/cwt"] = row["Suggested $/cwt"] or "MANUAL"
 
+        if history is not None:
+            h0 = history[idx] if idx < len(history) else {}
+            sold = (h0.get("sold") or [None])[0]
+            quoted = (h0.get("quoted") or [None])[0]
+            if sold:
+                row["Last sold $/cwt"] = sold.get("cwt")
+                row["Last sold date"] = sold.get("date")
+            if quoted:
+                row["Last quote $/cwt"] = quoted.get("cwt")
+                row["Last quote outcome"] = (quoted.get("outcome") or "").upper()
+                row["Last quote date"] = quoted.get("date")
+
         for h in headers:
             cell = ws.cell(r, col_of[h], row[h])
             cell.border = border
@@ -223,7 +243,8 @@ def build_workbook(payload, result, get_product, playbook=2, pb_adder=0.0):
             if h in ("Avg Cost $/cwt (avail)", "Avg Cost $/cwt (incoming)", "Suggested $/cwt",
                      "Base $/cwt", "Volume adder", "Region - Freight", "Region - Competitive",
                      "Inventory position", "PB adder", "Segmentation", "Credit",
-                     "Dynamic margin", "Custom-length adder", "Extras") and isinstance(row[h], (int, float)):
+                     "Dynamic margin", "Custom-length adder", "Extras",
+                     "Last sold $/cwt", "Last quote $/cwt") and isinstance(row[h], (int, float)):
                 cell.number_format = '$#,##0.00;[Red]-$#,##0.00'
             elif h == "Total Price" and isinstance(row[h], (int, float)):
                 cell.number_format = '$#,##0.00'
@@ -243,7 +264,7 @@ def build_workbook(payload, result, get_product, playbook=2, pb_adder=0.0):
         g.fill = PatternFill("solid", fgColor="FEF9C3")
 
     # group-shade data cells + widths
-    for i, (h, grp) in enumerate(COLUMNS, 1):
+    for i, (h, grp) in enumerate(columns, 1):
         fill = GROUP_FILL.get(grp)
         for rr in range(hr + 1, r):
             cell = ws.cell(rr, i)
@@ -251,7 +272,8 @@ def build_workbook(payload, result, get_product, playbook=2, pb_adder=0.0):
                 if cell.fill.fgColor.rgb in (None, "00000000"):
                     cell.fill = PatternFill("solid", fgColor=fill)
     widths = [5, 10, 9, 9, 9, 9, 7, 6, 13, 13, 11, 11, 13, 11, 14,
-              12, 13, 10, 11, 13, 14, 12, 8, 11, 12, 9, 13, 13, 9]
+              12, 13, 10, 11, 13, 14, 12, 8, 11, 12, 9, 13, 13, 9] + \
+             (HIST_WIDTHS if history is not None else [])
     from openpyxl.utils import get_column_letter
     for i, wd in enumerate(widths[:ncol], 1):
         ws.column_dimensions[get_column_letter(i)].width = wd

@@ -135,8 +135,18 @@ class Handler(BaseHTTPRequestHandler):
                 cust = db.get_customer(payload.get("customer_name"))
                 pb = (cust or {}).get("playbook", 2) or 2
                 pb_adder = db.get_cust_config().get("pb%d_cwt" % pb, 0.0)
+                history = None
+                if payload.get("with_history"):
+                    cname = payload.get("customer_name")
+                    history = []
+                    for lin in payload.get("lines", []):
+                        prod = db.get_product(lin.get("key")) or {}
+                        history.append(db.item_history(
+                            cname, lin.get("key"),
+                            prod.get("grade") or lin.get("grade"),
+                            prod.get("thickness") or lin.get("thickness")))
                 data = quote_export.build_workbook(payload, result, db.get_product,
-                                                   playbook=pb, pb_adder=pb_adder)
+                                                   playbook=pb, pb_adder=pb_adder, history=history)
                 self._log_quote("exported", payload, result)
                 from datetime import datetime
                 fn = "Quote_%s.xlsx" % datetime.now().strftime("%Y%m%d_%H%M")

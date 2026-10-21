@@ -756,7 +756,7 @@ if($("dljournal")) $("dljournal").onclick=async()=>{
 $("exportxlsx").onclick=async()=>{
   if(!LINES.length) return;
   const m=$("savemsg"); m.textContent="Building Excel…";
-  const body={lines:LINES,adder_basis:basis(),use_inventory:true,destination:$("dest").value,region_mode:$("regionmode").value,customer_name:$("custselect").value};
+  const body={lines:LINES,adder_basis:basis(),use_inventory:true,destination:$("dest").value,region_mode:$("regionmode").value,customer_name:$("custselect").value,with_history:!!($("showhist")&&$("showhist").checked)};
   try{
     const resp=await fetch("/api/export-quote",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
     if(!resp.ok) throw new Error("export failed");
