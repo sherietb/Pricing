@@ -88,8 +88,9 @@ def latest_pricing_workbook():
     Lets a user drop in a re-dated file (Pricing 7.14.26.xlsx -> Pricing 9.9.26.xlsx)
     without editing any code.
     """
-    files = [p for p in glob.glob(os.path.join(HERE, "Pricing *.xlsx"))
-             if not os.path.basename(p).startswith("~$")]
+    hits = (glob.glob(os.path.join(HERE, "Pricing *.xlsx"))
+            + glob.glob(os.path.join(HERE, "**", "Pricing *.xlsx"), recursive=True))
+    files = {p for p in hits if not os.path.basename(p).startswith("~$")}
     if not files:
         return os.path.join(HERE, "Pricing.xlsx")  # nonexistent -> clear error on import
     return max(files, key=os.path.getmtime)
