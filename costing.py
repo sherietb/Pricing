@@ -84,13 +84,23 @@ def set_config(updates):
     return get_config()
 
 
-def material_cost(thickness, grade, width, bases=None):
-    """Estimated material cost $/cwt for a product, or None if no material basis."""
+def material_cost(thickness, grade, width, bases=None, form=None):
+    """Estimated material cost $/cwt. The cost BASIS follows the FORM:
+      CC / FPCO (coil)    -> HRC (CRU HRC)
+      CP / FP  (discrete) -> HRP (CRU Plate, by width tier)
+    When form is unknown, fall back to thickness (gauges -> HRC, fractions -> plate)."""
     if grade in NO_COST_GRADES:
         return None
     b = bases or get_config()
     slit = SLIT if "slit" in str(width).lower() else 0.0
-    if thickness in GAUGES:
+    f = (form or "").strip().upper()
+    if f in ("CC", "FPCO"):
+        coil = True
+    elif f in ("CP", "FP"):
+        coil = False
+    else:
+        coil = thickness in GAUGES
+    if coil:
         c = b["hrc"] + GRADE_HRC.get(grade, 0.0)
         if thickness == "16G":
             c += G16
@@ -107,6 +117,27 @@ def material_cost(thickness, grade, width, bases=None):
     else:
         wbase = b["plate_narrow"]
     return round(wbase + THK_EXTRA.get(thickness, 0.0) + GRADE_PLATE.get(grade, 0.0) + slit, 2)
+
+
+def get_manual(key):
+    """Return a manual cost override for a product key, or None."""
+    conn = connect()
+    try:
+        row = conn.execute("SELECT cost_cwt FROM product_cost WHERE key=? AND source='manual'",
+                           (key,)).fetchone()
+    except Exception:
+        row = None
+    conn.close()
+    return row["cost_cwt"] if row and row["cost_cwt"] is not None else None
+
+
+def cost_for(key, thickness, grade, width, form=None):
+    """Form-aware material cost for a quote line: a manual override wins, otherwise
+    derive from the form's CRU basis (HRC for coil, HRP for discrete plate)."""
+    m = get_manual(key)
+    if m is not None:
+        return m
+    return material_cost(thickness, grade, width, form=form)
 
 
 def derive_costs():

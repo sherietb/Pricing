@@ -277,7 +277,9 @@ class Handler(BaseHTTPRequestHandler):
                 stock_tiers=stock, length_tiers=length, extras_catalog=extras_catalog,
             )
             res["inventory"] = inv
-            mat = costing.get_cost(line["key"])
+            cost_form = (inv.get("form") if inv else None) or line.get("form")
+            mat = costing.cost_for(line["key"], product["thickness"], product["grade"],
+                                   product.get("width_num") or product.get("width"), cost_form)
             if res.get("rate_cwt") is not None and mat is not None:
                 freight_c = next((b["cwt"] for b in res["breakdown"] if b["label"].startswith("Freight")), 0.0)
                 sell = res["rate_cwt"] - freight_c   # freight is pass-through, not margin
