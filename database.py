@@ -247,7 +247,11 @@ LOGIC_VERSION = "2026.10.20"
 # and a DYNAMIC margin that ratchets up per win (capped) and eases back per loss.
 CUSTOMER_CONFIG = {"pb1_cwt": -2.0, "pb2_cwt": 0.0, "pb3_cwt": 2.0,
                    "credit_high_cwt": 2.0, "credit_low_cwt": 0.0,
-                   "dyn_step_cwt": 0.5, "dyn_cap_cwt": 3.0, "dyn_loss_cwt": 0.5}
+                   "dyn_step_cwt": 0.5, "dyn_cap_cwt": 3.0, "dyn_loss_cwt": 0.5,
+                   # Dynamic margin from live Invex outcomes: a customer who rarely loses
+                   # on price (PRC) gets up to dyn_cap; at/above dyn_prc_threshold price-loss
+                   # rate they get $0. Needs >= dyn_min_sample decisive (won+lost) quotes.
+                   "dyn_prc_threshold": 0.25, "dyn_min_sample": 3.0}
 
 
 def connect():
@@ -673,7 +677,124 @@ CUST_DB_CONN = os.environ.get(
 BOOKINGS_DB_CONN = os.environ.get(
     "PRICING_BOOKINGS_DB_CONN",
     "DRIVER={SQL Server};SERVER=10.0.1.50;DATABASE=Inventory_Planning;Trusted_Connection=yes")
+# Live Invex ERP (PostgreSQL via the INVEX ODBC DSN) -- has real quote status +
+# close reasons (COM=won, PRC=lost on price) that the SQL-Server extracts don't carry.
+INVEX_CONN = os.environ.get("PRICING_INVEX_CONN", "DSN=INVEX")
 DASH_DEFAULT = {"conv_alert_pct": 60.0}
+
+# Invex quote close-reason codes -> (friendly label, outcome class).
+# outcome: won | lost_price | open | other  (only won/lost_price move dynamic margin)
+QUOTE_REASONS = {
+    "COM": ("Completed", "won"),
+    "PRC": ("Price too high", "lost_price"),
+    "EXP": ("Quote expired", "other"),
+    "STK": ("No stock", "other"),
+    "LT":  ("Lead time", "other"),
+    "BID": ("Customer bidding", "other"),
+    "CAN": ("Cancelled", "other"),
+    "TRC": ("Transaction closed", "other"),
+    "ERR": ("Entry error", "other"),
+}
+
+
+def invex_available():
+    try:
+        import pyodbc
+        cn = pyodbc.connect(INVEX_CONN, timeout=5); cn.close()
+        return True
+    except Exception:
+        return False
+
+
+def _invex_outcome(status, reason):
+    status = (status or "").strip().upper()
+    reason = (reason or "").strip().upper()
+    if status == "A":
+        return "open", "Open"
+    label, cls = QUOTE_REASONS.get(reason, (reason or "Closed", "other"))
+    return cls, label
+
+
+# Join from the Open Quote Report: QT quotes + status/reason (tcttsa_rec) + item (tctipd_rec).
+_INVEX_QUOTE_FROM = """
+  FROM ortord_rec
+  JOIN ortorh_rec ON orh_cmpy_id=ord_cmpy_id AND orh_ord_pfx=ord_ord_pfx AND orh_ord_no=ord_ord_no AND orh_ord_pfx='QT'
+  JOIN tctipd_rec ipd ON orh_cmpy_id=ipd.ipd_cmpy_id AND orh_ord_pfx=ipd.ipd_ref_pfx AND orh_ord_no=ipd.ipd_ref_no AND ord_ord_itm=ipd.ipd_ref_itm
+  JOIN tcttsa_rec ON orh_cmpy_id=tsa_cmpy_id AND orh_ord_pfx=tsa_ref_pfx AND orh_ord_no=tsa_ref_no AND ord_ord_itm=tsa_ref_itm AND tsa_ref_sbitm=0 AND tsa_sts_typ='T'
+  LEFT JOIN arrcus_rec ON orh_cmpy_id=cus_cmpy_id AND orh_sld_cus_id=cus_cus_id
+"""
+
+
+def invex_quote_history(customer, grade, thickness, limit=3):
+    """Recent Invex quotes of this grade+thickness to this customer, with the quoted
+    $/cwt (ord_bk_prc) and the outcome (won / lost on price / open / other reason)."""
+    import pyodbc
+    if not (customer and grade and thickness):
+        return []
+    cn = pyodbc.connect(INVEX_CONN, timeout=20); cur = cn.cursor()
+    cur.execute("""
+      SELECT CAST(tsa_crtd_dtts AS date) qdate, tsa_sts_actn status, COALESCE(tsa_rsn,'') rsn,
+             ord_bk_prc, LTRIM(RTRIM(orh_tkn_slp)) rep, LTRIM(RTRIM(ipd.ipd_frm)) form
+      """ + _INVEX_QUOTE_FROM + """
+      WHERE LOWER(cus_cus_long_nm)=LOWER(?) AND LTRIM(RTRIM(ipd.ipd_grd))=? AND LTRIM(RTRIM(ipd.ipd_size))=?
+      ORDER BY tsa_crtd_dtts DESC FETCH FIRST ? ROWS ONLY
+    """, customer.strip(), str(grade).strip(), str(thickness).strip(), int(limit))
+    out = []
+    for r in cur.fetchall():
+        cls, label = _invex_outcome(r[1], r[2])
+        out.append({"date": str(r[0])[:10], "outcome": cls, "reason": label,
+                    "cwt": float(r[3]) if r[3] and float(r[3]) > 0 else None,
+                    "rep": r[4], "form": r[5]})
+    cn.close()
+    return out
+
+
+def invex_outcomes_by_customer(days=180):
+    """{normalized customer name -> {'won': n_COM, 'lost_price': n_PRC}} over the window,
+    for driving dynamic margin from real Invex outcomes."""
+    import pyodbc
+    cn = pyodbc.connect(INVEX_CONN, timeout=40); cur = cn.cursor()
+    cur.execute("""
+      SELECT cus_cus_long_nm cust,
+             SUM(CASE WHEN COALESCE(tsa_rsn,'')='COM' THEN 1 ELSE 0 END) won,
+             SUM(CASE WHEN COALESCE(tsa_rsn,'')='PRC' THEN 1 ELSE 0 END) lost_price
+      """ + _INVEX_QUOTE_FROM + """
+      WHERE tsa_crtd_dtts > CURRENT_DATE - (%d * INTERVAL '1 day') AND cus_cus_long_nm IS NOT NULL
+      GROUP BY cus_cus_long_nm
+    """ % int(days))
+    out = {}
+    for r in cur.fetchall():
+        if r[0]:
+            out[_norm_name(r[0])] = {"won": int(r[1] or 0), "lost_price": int(r[2] or 0)}
+    cn.close()
+    return out
+
+
+def recompute_dynamic_from_invex(days=180):
+    """Set each customer's dynamic margin from their live Invex quote outcomes:
+    low price-loss rate (we keep winning on price) -> up to dyn_cap; high price-loss
+    rate (PRC) -> $0. Decisive = COM (won) + PRC (lost on price)."""
+    cfg = get_cust_config()
+    cap = float(cfg["dyn_cap_cwt"]); step = float(cfg["dyn_step_cwt"]) or 0.5
+    thr = float(cfg.get("dyn_prc_threshold", 0.25)) or 0.25
+    minn = int(cfg.get("dyn_min_sample", 3) or 3)
+    oc = invex_outcomes_by_customer(days)
+    conn = connect(); conn.executescript(SCHEMA)
+    updated = 0
+    for c in list_customers():
+        rec = oc.get(_norm_name(c["name"]))
+        if not rec:
+            continue
+        dec = rec["won"] + rec["lost_price"]
+        if dec < minn:
+            continue
+        prc_rate = rec["lost_price"] / dec
+        dyn = max(0.0, min(cap, cap * (1.0 - prc_rate / thr)))
+        dyn = round(round(dyn / step) * step, 2)
+        conn.execute("UPDATE customers SET dyn_cwt=? WHERE name=?", (dyn, c["name"]))
+        updated += 1
+    conn.commit(); conn.close()
+    return {"updated": updated, "window_days": days, "customers_with_outcomes": len(oc)}
 
 
 def _ensure_quote_status():
@@ -1184,15 +1305,20 @@ def item_quote_history(customer, key, limit=3):
 
 
 def item_history(customer, key, grade, thickness, limit=3):
-    sold = quoted = []
+    sold, quoted = [], []
     try:
         sold = item_sales_history(customer, grade, thickness, limit)
     except Exception:
         sold = []
-    try:
-        quoted = item_quote_history(customer, key, limit)
+    try:                                         # prefer live Invex quote outcomes
+        quoted = invex_quote_history(customer, grade, thickness, limit)
     except Exception:
         quoted = []
+    if not quoted:                               # fall back to the app's own saved quotes
+        try:
+            quoted = item_quote_history(customer, key, limit)
+        except Exception:
+            quoted = []
     return {"sold": sold, "quoted": quoted}
 
 
@@ -1279,8 +1405,14 @@ def import_customers_from_db():
         n += 1
     conn.commit()
     conn.close()
+    dynamic = 0
+    try:                                      # tie per-customer dynamic margin to live Invex outcomes
+        if invex_available():
+            dynamic = recompute_dynamic_from_invex().get("updated", 0)
+    except Exception:
+        dynamic = 0
     return {"imported": n, "segmented": matched, "regioned": regioned,
-            "high_risk": high, "cycle_d_loaded": bool(cycle_d)}
+            "high_risk": high, "cycle_d_loaded": bool(cycle_d), "dynamic": dynamic}
 
 
 def import_customers_csv(path=None):

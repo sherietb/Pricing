@@ -232,8 +232,13 @@ def build_workbook(payload, result, get_product, playbook=2, pb_adder=0.0, histo
                 row["Last sold $/cwt"] = sold.get("cwt")
                 row["Last sold date"] = sold.get("date")
             if quoted:
+                oc = (quoted.get("outcome") or "").lower()
+                label = {"won": "WON", "lost_price": "LOST — price",
+                         "open": "OPEN"}.get(oc)
+                if not label:                     # non-price close reason: show it as-is
+                    label = (quoted.get("reason") or oc or "").upper()
                 row["Last quote $/cwt"] = quoted.get("cwt")
-                row["Last quote outcome"] = (quoted.get("outcome") or "").upper()
+                row["Last quote outcome"] = label
                 row["Last quote date"] = quoted.get("date")
 
         for h in headers:

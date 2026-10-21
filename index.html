@@ -344,6 +344,7 @@
           <option value="high">High risk</option></select></div>
         <div style="align-self:end"><button class="ghost" id="cu_save">Save customer</button></div>
         <div style="align-self:end"><button class="primary" id="cu_pulldb">Pull customers from database</button></div>
+        <div style="align-self:end"><button class="ghost" id="cu_refreshdyn">Refresh dynamic margin from Invex</button></div>
         <div style="align-self:end"><button class="ghost" id="cu_import">Import Customers.csv</button></div>
       </div>
       <div class="grid" style="margin-top:8px">
@@ -630,8 +631,9 @@ async function loadHistory(res){
     if(h.sold&&h.sold.length){ const s=h.sold[0];
       parts.push('<span style="color:#166534">Last sold $'+(s.cwt!=null?s.cwt.toFixed(2):"?")+"/cwt · "+s.date+(s.osr?" · "+s.osr:"")+"</span>"); }
     if(h.quoted&&h.quoted.length){ const q=h.quoted[0];
-      const col=q.outcome==="won"?"#166534":q.outcome==="lost"?"#991b1b":"#64748b";
-      parts.push('<span style="color:'+col+'">App quote '+(q.cwt!=null?"$"+q.cwt.toFixed(2)+"/cwt · ":"")+(q.outcome||"").toUpperCase()+" · "+q.date+"</span>"); }
+      const col=q.outcome==="won"?"#166534":q.outcome==="lost_price"?"#991b1b":q.outcome==="open"?"#64748b":"#b45309";
+      const tag=q.outcome==="won"?"WON":q.outcome==="lost_price"?"LOST — price":q.outcome==="open"?"OPEN":(q.reason||"closed");
+      parts.push('<span style="color:'+col+'">Last quote '+(q.cwt!=null?"$"+q.cwt.toFixed(2)+"/cwt · ":"")+tag+" · "+q.date+(q.rep?" · "+q.rep:"")+"</span>"); }
     e.innerHTML = parts.length ? ("📈 "+parts.join(" &nbsp;|&nbsp; ")) : '<span style="color:#94a3b8">no prior sales/quotes of this item to this customer</span>';
   });
 }
@@ -677,7 +679,13 @@ $("cu_pulldb").onclick=async()=>{
   const m=$("custmsg");m.className="msg";m.textContent="Pulling customers from database...";
   const r=await (await fetch("/api/admin/pull-customers-db",{method:"POST"})).json();
   if(r.error){m.className="msg err";m.textContent="DB pull failed: "+r.error;}
-  else{m.className="msg ok";m.textContent="Pulled "+r.imported+" customers (names + credit) from ERP.";await boot();}
+  else{m.className="msg ok";m.textContent="Pulled "+r.imported+" customers (names + credit) from ERP."+(r.dynamic?(" Dynamic margin updated for "+r.dynamic+" from Invex."):"");await boot();}
+};
+$("cu_refreshdyn").onclick=async()=>{
+  const m=$("custmsg");m.className="msg";m.textContent="Recomputing dynamic margin from Invex quote outcomes...";
+  const r=await (await fetch("/api/admin/refresh-dynamic-invex",{method:"POST"})).json();
+  if(r.error||r.ok===false){m.className="msg err";m.textContent="Invex refresh failed: "+(r.error||"not reachable");}
+  else{m.className="msg ok";m.textContent="Dynamic margin updated for "+r.updated+" customers from "+r.customers_with_outcomes+" with outcomes ("+r.window_days+"-day window).";await boot();}
 };
 $("cu_import").onclick=async()=>{
   const m=$("custmsg");m.className="msg";m.textContent="Importing Customers.csv...";

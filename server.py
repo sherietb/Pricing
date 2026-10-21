@@ -187,6 +187,11 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(200, db.import_customers_csv())
             elif self.path == "/api/admin/pull-customers-db":
                 self._send(200, db.import_customers_from_db())
+            elif self.path == "/api/admin/refresh-dynamic-invex":
+                if not db.invex_available():
+                    self._send(200, {"ok": False, "error": "Invex (DSN=INVEX) not reachable"})
+                else:
+                    self._send(200, db.recompute_dynamic_from_invex())
             elif self.path == "/api/dash-config":
                 self._send(200, {"dash_config": db.set_dash_config(self._read_json())})
             elif self.path.startswith("/api/quotes/") and self.path.endswith("/status"):

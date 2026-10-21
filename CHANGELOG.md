@@ -21,6 +21,19 @@ workbook). Each quote's journal entry snapshots the CRU in effect at the time.
 - **2026-10-14 CRU:** HR **$1,285/ton = $64.25/cwt**, Plate **$1,430/ton = $71.50/cwt**
   (plate applied to all width tiers). Set `hrc=64.25`, `plate_narrow/wide/120=71.50`.
 
+## 2026.10.21 — Live Invex integration
+- **Price history now reads the live Invex ERP** (PostgreSQL, `DSN=INVEX`). The
+  last-quoted date / $/cwt / outcome shown per item (and in the internal export when
+  "Show price history" is on) comes from real Invex quotes (`ord_bk_prc`, close
+  reason `tsa_rsn`), falling back to the app's own saved quotes only when Invex has
+  none. Close reasons: COM=won, PRC=lost on price, A=open, plus EXP/STK/LT/etc.
+- **Dynamic margin tied to real ERP outcomes.** Each customer's dynamic margin is
+  set from their Invex price-loss rate (PRC ÷ decisive) over a 180-day window: low
+  loss rate → up to `dyn_cap`, at/above `dyn_prc_threshold` → $0, needs
+  `dyn_min_sample` decisive quotes. Recomputes on every customer pull and via the
+  Admin **"Refresh dynamic margin from Invex"** button
+  (`POST /api/admin/refresh-dynamic-invex`).
+
 ## 2026.10.20
 - **Quote journal added.** Every saved/exported quote is logged with a timestamp,
   the logic version, and a config snapshot (region rates, customer adders, credit
