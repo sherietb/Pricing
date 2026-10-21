@@ -33,8 +33,10 @@ SOURCE_QUERY_FILE = os.path.join(HERE, "inventory_query.sql")
 # PLATE so each can be tuned on its own. Rule per type: months-on-hand < short_months ->
 # premium (+adj_short); > long_months -> discount (adj_long); in between -> baseline.
 PRODUCT_TYPES = ("ctl", "plate")
-RULE_KEYS = ("short_months", "long_months", "adj_short_cwt", "adj_long_cwt")
-DEFAULT_RULE = {"short_months": 1.0, "long_months": 2.0, "adj_short_cwt": 2.0, "adj_long_cwt": -2.0}
+RULE_KEYS = ("short_months", "long_months", "very_long_months",
+             "adj_short_cwt", "adj_long_cwt", "adj_very_long_cwt")
+DEFAULT_RULE = {"short_months": 1.0, "long_months": 2.0, "very_long_months": 4.0,
+                "adj_short_cwt": 2.0, "adj_long_cwt": -2.0, "adj_very_long_cwt": -4.0}
 
 # Inventory data older than this many days shows a "stale" warning to reps.
 STALE_DAYS = 2
@@ -413,9 +415,13 @@ def projected_months(gr):
 
 
 def classify(mos, rule):
-    """rule = one product type's dict. <short -> premium, >long -> discount, else baseline."""
+    """rule = one product type's dict. Tiers (months-on-hand):
+       > very_long -> deeper discount, > long -> discount, < short -> premium, else baseline."""
     if mos is None:
         return "unknown", 0.0
+    vlm = rule.get("very_long_months", DEFAULT_RULE["very_long_months"])
+    if mos > vlm:
+        return "very long", rule.get("adj_very_long_cwt", DEFAULT_RULE["adj_very_long_cwt"])
     if mos > rule["long_months"]:
         return "long", rule["adj_long_cwt"]
     if mos < rule["short_months"]:

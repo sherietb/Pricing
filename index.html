@@ -69,6 +69,7 @@
   .pill.manual{background:var(--warnbg);color:var(--warn)}
   .pos{display:inline-block;padding:1px 7px;border-radius:99px;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.3px}
   .pos.long{background:#dcfce7;color:#166534}
+  .pos.very{background:#bbf7d0;color:#14532d}
   .pos.short{background:#fee2e2;color:#991b1b}
   .pos.balanced{background:#e2e8f0;color:#475569}
   .pos.unknown{background:#f1f5f9;color:#94a3b8}
@@ -291,15 +292,19 @@
       <div class="grid">
         <div><label>Premium if &lt; (mo)</label><input id="ctl_short" type="number" step="0.1"></div>
         <div><label>Discount if &gt; (mo)</label><input id="ctl_long" type="number" step="0.1"></div>
+        <div><label>Very long if &gt; (mo)</label><input id="ctl_vlong" type="number" step="0.1"></div>
         <div><label>Premium $/cwt</label><input id="ctl_adjshort" type="number" step="0.25"></div>
         <div><label>Discount $/cwt</label><input id="ctl_adjlong" type="number" step="0.25"></div>
+        <div><label>Very-long $/cwt</label><input id="ctl_adjvlong" type="number" step="0.25"></div>
       </div>
       <div style="font-size:12px;color:var(--muted);margin:8px 0 6px">Discrete plate</div>
       <div class="grid">
         <div><label>Premium if &lt; (mo)</label><input id="plate_short" type="number" step="0.1"></div>
         <div><label>Discount if &gt; (mo)</label><input id="plate_long" type="number" step="0.1"></div>
+        <div><label>Very long if &gt; (mo)</label><input id="plate_vlong" type="number" step="0.1"></div>
         <div><label>Premium $/cwt</label><input id="plate_adjshort" type="number" step="0.25"></div>
         <div><label>Discount $/cwt</label><input id="plate_adjlong" type="number" step="0.25"></div>
+        <div><label>Very-long $/cwt</label><input id="plate_adjvlong" type="number" step="0.25"></div>
         <div style="align-self:end"><button class="ghost" id="saverule">Save inventory rules</button></div>
         <div style="align-self:end"><button class="primary" id="refreshdb">Refresh from database (live)</button></div>
         <div style="align-self:end"><button class="ghost" id="reimportinv">Re-import from spreadsheet</button></div>
@@ -417,12 +422,12 @@ async function boot(){
     if(im.as_of){age=" · as of "+im.as_of.slice(0,10)+(im.days_old!=null?" ("+im.days_old+"d old)":"");}
     const staleChip=im.stale?' <span class="pos short">STALE &gt;'+im.stale_days+"d</span>":"";
     const f=x=>Number(x).toFixed(2);
-    $("invnote").innerHTML="CTL: &lt;"+c.short_months+"mo +$"+f(c.adj_short_cwt)+" / &gt;"+c.long_months+"mo $"+f(c.adj_long_cwt)
-      +" &nbsp;|&nbsp; Plate: &lt;"+p.short_months+"mo +$"+f(p.adj_short_cwt)+" / &gt;"+p.long_months+"mo $"+f(p.adj_long_cwt)+age+staleChip;
+    $("invnote").innerHTML="CTL: &lt;"+c.short_months+"mo +$"+f(c.adj_short_cwt)+" / &gt;"+c.long_months+"mo $"+f(c.adj_long_cwt)+" / &gt;"+c.very_long_months+"mo $"+f(c.adj_very_long_cwt)
+      +" &nbsp;|&nbsp; Plate: &lt;"+p.short_months+"mo +$"+f(p.adj_short_cwt)+" / &gt;"+p.long_months+"mo $"+f(p.adj_long_cwt)+" / &gt;"+p.very_long_months+"mo $"+f(p.adj_very_long_cwt)+age+staleChip;
   }
   if($("ctl_short")){
-    $("ctl_short").value=c.short_months;$("ctl_long").value=c.long_months;$("ctl_adjshort").value=c.adj_short_cwt;$("ctl_adjlong").value=c.adj_long_cwt;
-    $("plate_short").value=p.short_months;$("plate_long").value=p.long_months;$("plate_adjshort").value=p.adj_short_cwt;$("plate_adjlong").value=p.adj_long_cwt;
+    $("ctl_short").value=c.short_months;$("ctl_long").value=c.long_months;$("ctl_vlong").value=c.very_long_months;$("ctl_adjshort").value=c.adj_short_cwt;$("ctl_adjlong").value=c.adj_long_cwt;$("ctl_adjvlong").value=c.adj_very_long_cwt;
+    $("plate_short").value=p.short_months;$("plate_long").value=p.long_months;$("plate_vlong").value=p.very_long_months;$("plate_adjshort").value=p.adj_short_cwt;$("plate_adjlong").value=p.adj_long_cwt;$("plate_adjvlong").value=p.adj_very_long_cwt;
   }
   if($("c_minspread")&&DATA.cost_config){const cc=DATA.cost_config;
     $("c_minspread").value=cc.min_spread_pct;$("c_hrc").value=cc.hrc;
@@ -688,10 +693,10 @@ $("reimportinv").onclick=async()=>{
 $("saverule").onclick=async()=>{
   const send=(pt,b)=>fetch("/api/admin/inv-rule",{method:"POST",headers:{"Content-Type":"application/json"},
      body:JSON.stringify(Object.assign({product_type:pt},b))});
-  await send("ctl",{short_months:parseFloat($("ctl_short").value),long_months:parseFloat($("ctl_long").value),
-    adj_short_cwt:parseFloat($("ctl_adjshort").value),adj_long_cwt:parseFloat($("ctl_adjlong").value)});
-  await send("plate",{short_months:parseFloat($("plate_short").value),long_months:parseFloat($("plate_long").value),
-    adj_short_cwt:parseFloat($("plate_adjshort").value),adj_long_cwt:parseFloat($("plate_adjlong").value)});
+  await send("ctl",{short_months:parseFloat($("ctl_short").value),long_months:parseFloat($("ctl_long").value),very_long_months:parseFloat($("ctl_vlong").value),
+    adj_short_cwt:parseFloat($("ctl_adjshort").value),adj_long_cwt:parseFloat($("ctl_adjlong").value),adj_very_long_cwt:parseFloat($("ctl_adjvlong").value)});
+  await send("plate",{short_months:parseFloat($("plate_short").value),long_months:parseFloat($("plate_long").value),very_long_months:parseFloat($("plate_vlong").value),
+    adj_short_cwt:parseFloat($("plate_adjshort").value),adj_long_cwt:parseFloat($("plate_adjlong").value),adj_very_long_cwt:parseFloat($("plate_adjvlong").value)});
   const m=$("invmsg");m.className="msg ok";m.textContent="Inventory rules saved (CTL + plate).";
   await boot(); await refresh();
 };
