@@ -188,13 +188,26 @@ class Handler(BaseHTTPRequestHandler):
             elif self.path == "/api/quotes":
                 pl = self._read_json()
                 quote = pl.get("quote", {})
+                result = None
+                try:
+                    result = self._quote(quote)
+                    quote["_priced"] = [{"key": r.get("key"), "cwt": r.get("rate_cwt")}
+                                        for r in result.get("lines", []) if r.get("key")]
+                except Exception:
+                    pass
                 qid = db.save_quote(pl.get("customer"), pl.get("quote_no"),
                                     quote, pl.get("grand_total"))
                 try:
-                    self._log_quote("saved", quote, self._quote(quote), ref=qid)
+                    self._log_quote("saved", quote, result or self._quote(quote), ref=qid)
                 except Exception:
                     pass
                 self._send(200, {"id": qid})
+            elif self.path == "/api/item-history":
+                pl = self._read_json()
+                cust = pl.get("customer_name")
+                out = [db.item_history(cust, it.get("key"), it.get("grade"), it.get("thickness"))
+                       for it in pl.get("items", [])]
+                self._send(200, {"history": out})
             elif self.path.startswith("/api/quotes/") and self.path.endswith("/delete"):
                 qid = self.path.split("/")[3]
                 self._send(200, {"deleted": db.delete_quote(int(qid)) if qid.isdigit() else 0})

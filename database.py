@@ -1131,6 +1131,70 @@ def dashboard(days=90, osr=None, isr=None, whs=None, form=None):
     return out
 
 
+def item_sales_history(customer, grade, thickness, limit=3):
+    """Recent ERP orders (= won/sold) of this grade+thickness to this customer,
+    with the $/cwt we sold at and the date. 'size' in salesforce_bookings_so is the
+    thickness code, so it matches the app's thickness."""
+    import pyodbc
+    if not (customer and grade and thickness):
+        return []
+    cn = pyodbc.connect(CUST_DB_CONN, timeout=20); cur = cn.cursor()
+    cur.execute(
+        "SELECT TOP (?) order_dt, ROUND(booked_value/NULLIF(net_wgt,0)*100,2) cwt, "
+        "ROUND(net_wgt/2000.0,1) tons, LTRIM(RTRIM(form)) form, LTRIM(RTRIM(os_rep)) osr "
+        "FROM dbo.salesforce_bookings_so "
+        "WHERE customer = ? AND LTRIM(RTRIM(grade)) = ? AND LTRIM(RTRIM(size)) = ? "
+        "AND net_wgt > 0 AND booked_value > 0 ORDER BY order_dt DESC",
+        limit, customer.strip(), str(grade).strip(), str(thickness).strip())
+    rows = [{"date": str(r[0])[:10], "cwt": float(r[1]) if r[1] is not None else None,
+             "tons": float(r[2] or 0), "form": r[3], "osr": r[4], "outcome": "sold"}
+            for r in cur.fetchall()]
+    cn.close()
+    return rows
+
+
+def item_quote_history(customer, key, limit=3):
+    """Prior APP quotes of this product (by key) to this customer: date, $/cwt we
+    quoted (stored at save time), and the outcome (won/lost/open)."""
+    if not (customer and key):
+        return []
+    _ensure_quote_status()
+    conn = connect()
+    conn.executescript(SCHEMA)
+    out = []
+    for r in conn.execute(
+            "SELECT created_at, COALESCE(status,'open') status, payload FROM quotes "
+            "WHERE customer = ? OR payload LIKE ? ORDER BY id DESC",
+            (customer.strip(), '%"customer_name": "' + customer.strip() + '"%')):
+        try:
+            pay = json.loads(r["payload"])
+        except Exception:
+            continue
+        if (pay.get("customer_name") or "").strip() != customer.strip():
+            continue
+        priced = {p.get("key"): p.get("cwt") for p in pay.get("_priced", [])}
+        if key in priced or any((l.get("key") == key) for l in pay.get("lines", [])):
+            out.append({"date": (r["created_at"] or "")[:10], "outcome": r["status"],
+                        "cwt": priced.get(key)})
+            if len(out) >= limit:
+                break
+    conn.close()
+    return out
+
+
+def item_history(customer, key, grade, thickness, limit=3):
+    sold = quoted = []
+    try:
+        sold = item_sales_history(customer, grade, thickness, limit)
+    except Exception:
+        sold = []
+    try:
+        quoted = item_quote_history(customer, key, limit)
+    except Exception:
+        quoted = []
+    return {"sold": sold, "quoted": quoted}
+
+
 
 def customers_db_available():
     try:

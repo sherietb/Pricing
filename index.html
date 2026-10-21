@@ -181,6 +181,9 @@
       <span class="sub2">✓ Inventory-position pricing is applied automatically.</span>
       <span id="invnote" class="sub2"></span>
     </div>
+    <div class="basis no-print">
+      <label><input type="checkbox" id="showhist"> Show price history for this customer (last sold / quoted per item)</label>
+    </div>
     <table id="qtable">
       <thead><tr>
         <th>Item</th><th class="num" id="whead">Weight (lb)</th><th>Rate build-up</th>
@@ -593,7 +596,7 @@ async function refresh(){
     const inc=(!nostock&&iv&&iv.sku_incoming_lbs!=null)?"Incoming: "+wnum(iv.sku_incoming_lbs)+" "+wunit():"";
     const ac=(!nostock&&iv&&iv.avg_cost_cwt!=null)?"Avg cost: $"+iv.avg_cost_cwt.toFixed(2)+"/cwt":"";
     const posinfo=(oh||av||inc||ac)?'<div class="sub2">'+[oh,av,inc,ac].filter(Boolean).join(" · ")+"</div>":"";
-    const item="<strong>"+r.description+pos+'</strong><div class="sub2">'+qtyInput+"</div>"+posinfo;
+    const item="<strong>"+r.description+pos+'</strong><div class="sub2">'+qtyInput+"</div>"+posinfo+'<div class="sub2" id="hist'+i+'"></div>';
     if(r.manual_quote) return "<tr><td>"+item+'</td><td class="num">'+wnum(r.weight_lb)+"</td>"+
         '<td colspan="2"><span class="pill manual">Manual quote</span> <span class="bd">'+(r.note||"")+"</span></td>"+
         '<td class="num">—</td>'+x+"</tr>";
@@ -609,8 +612,29 @@ async function refresh(){
   }).join("");
   $("grand").textContent="Grand total: "+money(res.grand_total);
   window.LAST_GRAND=res.grand_total||0;
+  if($("showhist")&&$("showhist").checked) loadHistory(res);
   $("orderwt").textContent = res.order_weight_lb ? ("combined order weight "+wnum(res.order_weight_lb)+" "+wunit()) : "";
 }
+async function loadHistory(res){
+  const cust=$("custselect").value;
+  const clr=()=>res.lines.forEach((r,i)=>{const e=$("hist"+i); if(e) e.innerHTML="";});
+  if(!cust||cust==="Prospect"){ clr(); return; }
+  const items=LINES.map(L=>{ const p=DATA.products.find(x=>x.key===L.key);
+    return {key:L.key||"", grade:(p?p.grade:L.grade)||"", thickness:(p?p.thickness:L.thickness)||""}; });
+  let data; try{ data=await (await fetch("/api/item-history",{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({customer_name:cust,items})})).json(); }catch(e){ return; }
+  (data.history||[]).forEach((h,i)=>{
+    const e=$("hist"+i); if(!e) return;
+    const parts=[];
+    if(h.sold&&h.sold.length){ const s=h.sold[0];
+      parts.push('<span style="color:#166534">Last sold $'+(s.cwt!=null?s.cwt.toFixed(2):"?")+"/cwt · "+s.date+(s.osr?" · "+s.osr:"")+"</span>"); }
+    if(h.quoted&&h.quoted.length){ const q=h.quoted[0];
+      const col=q.outcome==="won"?"#166534":q.outcome==="lost"?"#991b1b":"#64748b";
+      parts.push('<span style="color:'+col+'">App quote '+(q.cwt!=null?"$"+q.cwt.toFixed(2)+"/cwt · ":"")+(q.outcome||"").toUpperCase()+" · "+q.date+"</span>"); }
+    e.innerHTML = parts.length ? ("📈 "+parts.join(" &nbsp;|&nbsp; ")) : '<span style="color:#94a3b8">no prior sales/quotes of this item to this customer</span>';
+  });
+}
+if($("showhist")) $("showhist").onchange=refresh;
 function fmtQty(q){ return Number.isInteger(q)?q:q.toLocaleString(); }
 window.del=async i=>{LINES.splice(i,1);await refresh();};
 $("clear").onclick=async()=>{LINES=[];await refresh();};
