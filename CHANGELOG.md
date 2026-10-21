@@ -15,6 +15,9 @@ These change the **material-cost basis** used for spread/margin display and the
 below-floor flag — not the quoted selling price (which comes from the Pricing
 workbook). Each quote's journal entry snapshots the CRU in effect at the time.
 
+- **2026-10-21 CRU:** HRC **$1,302/ton = $65.10/cwt**, Plate **$1,434/ton = $71.70/cwt**.
+  Set `hrc=65.10`, `plate_narrow/wide/120=71.70`. (Material basis follows form:
+  CC/FPCO coil → HRC, CP/FP discrete → plate.)
 - **2026-10-14 CRU:** HR **$1,285/ton = $64.25/cwt**, Plate **$1,430/ton = $71.50/cwt**
   (plate applied to all width tiers). Set `hrc=64.25`, `plate_narrow/wide/120=71.50`.
 
