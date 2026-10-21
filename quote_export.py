@@ -57,6 +57,9 @@ def _adder_column(label):
 
 
 def _form_label(product, inv):
+    form = (inv or {}).get("form")
+    if form:
+        return str(form).upper()                 # resolved CC / CP / FPCO / FP
     pt = (inv or {}).get("product_type")
     if pt:
         return "CTL" if pt.lower() == "ctl" else "Plate"
