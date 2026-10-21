@@ -59,6 +59,7 @@
   .ghost{background:#eef2ff;color:var(--accent)}
   .ghost:hover{background:#e0e7ff}
   table{width:100%;border-collapse:collapse;font-size:14px}
+  tr.savedrow:hover td{background:#f1f5f9}
   th,td{text-align:left;padding:9px 10px;border-bottom:1px solid var(--line);vertical-align:top}
   th{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px}
   td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
@@ -775,10 +776,10 @@ async function loadSaved(){
   $("savedbody").innerHTML=qs.map(q=>{
     const st=q.status||"open";
     const chip='<span class="pos '+(st==="won"?"long":st==="lost"?"short":"balanced")+'">'+st+"</span>";
-    return "<tr><td>"+q.created_at.slice(0,10)+"</td><td>"+(q.customer||"—")+
+    return '<tr class="savedrow" style="cursor:pointer" title="Click to reopen this quote" onclick="openQuote('+q.id+')"><td>'+q.created_at.slice(0,10)+"</td><td>"+(q.customer||"—")+
     "</td><td>"+(q.quote_no||"—")+"</td><td>"+(q.destination||"Local")+'</td><td class="num">'+q.lines+
     '</td><td class="num">'+money(q.grand_total)+"</td><td>"+chip+"</td>"+
-    '<td class="no-print"><button class="ghost" onclick="setStatus('+q.id+',\'won\')">Won</button> '+
+    '<td class="no-print" onclick="event.stopPropagation()"><button class="ghost" onclick="setStatus('+q.id+',\'won\')">Won</button> '+
     '<button class="ghost" onclick="setStatus('+q.id+',\'lost\')">Lost</button> '+
     '<button class="ghost" onclick="openQuote('+q.id+')">Load</button> '+
     '<button class="ghost" onclick="removeQuote('+q.id+')">✕</button></td></tr>';}).join("");
