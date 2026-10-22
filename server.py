@@ -254,10 +254,24 @@ class Handler(BaseHTTPRequestHandler):
 
         def price(line, tier_weight=None):
             if line.get("offsheet") or not line.get("key"):
-                return _offsheet_result(line)
-            product = db.get_product(line["key"])
-            if not product:
-                return _offsheet_result(line)   # key no longer in the price list
+                # Not on the sheet by its own key -> borrow a fallback price if one applies.
+                product = db.resolve_priced_product(
+                    line.get("thickness"), line.get("grade"), line.get("width"), line.get("form"))
+                if not product:
+                    return _offsheet_result(line)
+            else:
+                product = db.get_product(line["key"])
+                if not product:
+                    product = db.resolve_priced_product(
+                        line.get("thickness"), line.get("grade"), line.get("width"), line.get("form"))
+                    if not product:
+                        return _offsheet_result(line)   # key no longer in the price list
+                elif product.get("price_cwt") is None:  # on the sheet but no price -> try fallback
+                    alias = db.resolve_priced_product(
+                        product["thickness"], product["grade"],
+                        product.get("width"), line.get("form"))
+                    if alias:
+                        product = alias
             inv = inventory.get_inventory_for(
                 product["thickness"], product.get("width_num") or product.get("width"),
                 product["grade"], line.get("form"), rules) if rules else None
@@ -282,8 +296,10 @@ class Handler(BaseHTTPRequestHandler):
                 stock_tiers=stock, length_tiers=length, extras_catalog=extras_catalog,
             )
             res["inventory"] = inv
+            if product.get("price_note") and not res.get("manual_quote"):
+                res["price_note"] = product["price_note"]   # borrowed-price fallback note
             cost_form = (inv.get("form") if inv else None) or line.get("form")
-            mat = costing.cost_for(line["key"], product["thickness"], product["grade"],
+            mat = costing.cost_for(product["key"], product["thickness"], product["grade"],
                                    product.get("width_num") or product.get("width"), cost_form)
             if res.get("rate_cwt") is not None and mat is not None:
                 freight_c = next((b["cwt"] for b in res["breakdown"] if b["label"].startswith("Freight")), 0.0)

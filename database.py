@@ -231,6 +231,13 @@ CREATE TABLE IF NOT EXISTS customers (
     dyn_cwt REAL DEFAULT 0, region TEXT, region_locked INTEGER DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS cust_config (k TEXT PRIMARY KEY, v REAL);
+-- Price fallbacks: an item with no sheet price borrows another item's listed price.
+-- As soon as own_key gets a real numeric price on the sheet, that wins (the alias is
+-- only consulted when the requested item has no usable price of its own).
+CREATE TABLE IF NOT EXISTS price_alias (
+    own_key TEXT PRIMARY KEY, thickness TEXT, thickness_in REAL, grade TEXT,
+    width TEXT, width_num REAL, form TEXT, src_key TEXT, note TEXT
+);
 CREATE TABLE IF NOT EXISTS quote_log (
     id INTEGER PRIMARY KEY AUTOINCREMENT, logged_at TEXT, event TEXT,
     logic_version TEXT, customer TEXT, region TEXT, grand_total REAL,
@@ -405,6 +412,73 @@ def get_product(key):
     row = conn.execute("SELECT * FROM products WHERE key=?", (key,)).fetchone()
     conn.close()
     return dict(row) if row else None
+
+
+def _normfield(s):
+    """Match the frontend's normField: lowercase, drop quotes/spaces/dashes."""
+    return "".join(ch for ch in str(s or "").lower() if ch not in ' "-\t\n\r')
+
+
+def _normthick(s):
+    """Match normThick: also drop the slash so '1/2' == '12'."""
+    return _normfield(s).replace("/", "")
+
+
+# Seed price fallbacks here. Each: requested item (dims) -> source product key whose
+# listed price it borrows until the requested item gets its own price on the sheet.
+_PRICE_ALIAS_SEED = [
+    # 1/2" x 96" 516-70 (CP) isn't on the sheet yet -> use 3/4" x 96" 516-70's price.
+    {"thickness": "12", "grade": "516-70", "width": "96", "form": "CP",
+     "src_key": "34-96-516-70",
+     "note": 'Priced as 3/4" x 96" 516-70 (no 1/2" sheet price yet)'},
+]
+
+
+def _ensure_price_alias():
+    conn = connect()
+    conn.executescript(SCHEMA)
+    for a in _PRICE_ALIAS_SEED:
+        th = a["thickness"]; wd = a["width"]; gr = a["grade"]
+        own_key = "-".join(p for p in (th, wd, gr) if p)
+        conn.execute(
+            "INSERT OR IGNORE INTO price_alias "
+            "(own_key, thickness, thickness_in, grade, width, width_num, form, src_key, note) "
+            "VALUES (?,?,?,?,?,?,?,?,?)",
+            (own_key, th, pe.thickness_to_inch(th), gr, wd, pe.width_to_number(wd),
+             a.get("form", ""), a["src_key"], a.get("note", "")))
+    conn.commit()
+    conn.close()
+
+
+def resolve_priced_product(thickness, grade, width, form=None):
+    """If an item has no sheet price of its own, return a product to price it with,
+    borrowing a source item's *current* listed price but keeping the requested item's
+    own dimensions/key (so weight, cost and history reflect the real item). Returns
+    None when no alias matches or the source has no numeric price."""
+    _ensure_price_alias()
+    nt, ng, nw = _normthick(thickness), _normfield(grade), _normfield(width)
+    nf = _normfield(form or "")
+    conn = connect()
+    rows = [dict(r) for r in conn.execute("SELECT * FROM price_alias")]
+    conn.close()
+    for a in rows:
+        if _normthick(a["thickness"]) != nt or _normfield(a["grade"]) != ng \
+           or _normfield(a["width"]) != nw:
+            continue
+        af = _normfield(a["form"] or "")
+        if af and nf and af != nf:        # explicit, different form -> not this alias
+            continue
+        own = get_product(a["own_key"])   # once it's on the sheet with a real price, that wins
+        if own and isinstance(own.get("price_cwt"), (int, float)):
+            return None
+        src = get_product(a["src_key"])
+        if not src or not isinstance(src.get("price_cwt"), (int, float)):
+            continue
+        return {"key": a["own_key"], "thickness": a["thickness"],
+                "thickness_in": a["thickness_in"], "grade": a["grade"],
+                "width": a["width"], "width_num": a["width_num"],
+                "price_cwt": src["price_cwt"], "price_note": a["note"]}
+    return None
 
 
 def get_tiers():

@@ -608,8 +608,9 @@ async function refresh(){
     const bd=r.breakdown.map(b=>b.label+": $"+b.cwt.toFixed(2)).join("<br>");
     const wt='<div class="num">'+wnum(r.weight_lb)+'</div><div class="sub2">'+wbasis(r.weight_basis)+"</div>";
     const sp=(r.spread_cwt!=null)?'<div class="sub2 '+(r.below_floor?"floorwarn":"")+'">CRU Spread $'+r.spread_cwt.toFixed(2)+" ("+r.spread_pct+"%)"+(r.below_floor?" ⚠ below floor":"")+"</div>":"";
+    const fb=r.price_note?'<div class="sub2" style="color:var(--warn)">↪ '+r.price_note+"</div>":"";
     return "<tr><td>"+item+'</td><td class="num">'+wt+"</td>"+
-        '<td class="bd">'+bd+'</td><td class="num">$'+r.rate_cwt.toFixed(2)+sp+"</td>"+
+        '<td class="bd">'+bd+'</td><td class="num">$'+r.rate_cwt.toFixed(2)+sp+fb+"</td>"+
         '<td class="num"><strong>'+money(r.line_total)+"</strong></td>"+x+"</tr>";
   }).join("");
   $("grand").textContent="Grand total: "+money(res.grand_total);
