@@ -66,7 +66,8 @@ CREATE TABLE IF NOT EXISTS inventory_pos (
 """
 
 # Form -> how its inventory position is matched + which rule it uses.
-# Coil forms match on grade+width (fungible); discrete forms match an exact SKU.
+# Coil forms match on thickness+width+grade (a master coil is a specific gauge);
+# discrete forms match an exact SKU (thickness+width+grade).
 COIL_FORMS = ("CC", "FPCO")        # CC = cut coil (CTL), FPCO = floor-plate coil
 DISCRETE_FORMS = ("CP", "FP")      # CP = discrete plate, FP = floor-plate stock
 FORM_CLASS = {"CC": "coil", "FPCO": "coil", "CP": "disc", "FP": "disc"}
@@ -316,11 +317,12 @@ def import_inventory_from_db():
         else:
             d["cc"] += ohd + po
 
-        # form-aware accumulation: coil forms -> grade|width, discrete forms -> exact SKU
+        # form-aware accumulation: coil forms -> grade|width|thickness (a master coil is
+        # a specific gauge, so positions are per thickness); discrete forms -> exact SKU.
         cls = FORM_CLASS.get(form)
         if cls == "coil":
-            a = coil_acc.setdefault(g + "|" + width, _blank())
-            a["grade"], a["width"] = g, width
+            a = coil_acc.setdefault(g + "|" + width + "|" + size_s, _blank())
+            a["grade"], a["width"], a["size"] = g, width, size_s
         elif cls == "disc":
             a = disc_acc.setdefault(key, _blank())
             a["grade"], a["size"], a["width"] = g, size_s, width
@@ -481,9 +483,9 @@ def default_form(thickness, grade, width):
 
 
 def get_inventory_for(thickness, width, grade, form=None, rules=None):
-    """Form-aware inventory position. Coil forms (CC/FPCO) match on grade+width;
-    discrete forms (CP/FP) match an exact SKU (thickness+width+grade). No matching
-    stock on hand -> the position defaults to SHORT (never a grade-level fallback)."""
+    """Form-aware inventory position. Coil forms (CC/FPCO) match on thickness+width+grade
+    (a master coil is a specific gauge); discrete forms (CP/FP) match an exact SKU
+    (thickness+width+grade). No matching stock on hand -> the position defaults to SHORT."""
     rules = rules or get_rules()
     form = (form or "").strip().upper()
     if form not in FORM_CLASS:          # Auto -> default by thickness/width/grade
@@ -491,8 +493,9 @@ def get_inventory_for(thickness, width, grade, form=None, rules=None):
     cls = FORM_CLASS.get(form, "disc")
     scope = "coil" if cls == "coil" else "sku"
     wk = _wkey(width)
-    poskey = (grade + "|" + wk) if scope == "coil" else \
-        "-".join(p for p in (str(thickness).strip(), wk, grade) if p)
+    tk = str(thickness).strip()
+    poskey = (grade + "|" + wk + "|" + tk) if scope == "coil" else \
+        "-".join(p for p in (tk, wk, grade) if p)
     conn = connect()
     try:
         rec = conn.execute("SELECT * FROM inventory_pos WHERE scope=? AND key=?",
@@ -519,7 +522,7 @@ def get_inventory_for(thickness, width, grade, form=None, rules=None):
             "avg_cost_cwt": rec["avg_cost_cwt"],
             "sku_incoming_lbs": round(rec["incoming_lbs"]) if rec["incoming_lbs"] else None,
             "months_of_supply": mos, "position": pos, "adjustment_cwt": round(adj, 2),
-            "basis": ("coil (grade+width)" if scope == "coil" else "sku")}
+            "basis": ("coil (thickness+width+grade)" if scope == "coil" else "sku")}
 
 
 if __name__ == "__main__":
