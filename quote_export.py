@@ -74,7 +74,7 @@ def _form_label(product, inv):
     return "CTL/Sheet" if th.endswith("G") else ("Plate" if th else "")
 
 
-UOM = {"pieces": "pc", "lbs": "lb", "coil": "coil", "tl": "TL"}
+UOM = {"pieces": "pc", "lbs": "lb", "tons": "tons", "coil": "coil", "tl": "TL"}
 
 
 def build_journal_workbook(rows):

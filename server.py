@@ -347,6 +347,9 @@ def _offsheet_result(line):
     if qty > 0:
         if unit == "lbs":
             weight, wbasis = qty, f"{qty:,.0f} lb"
+        elif unit == "tons":
+            weight = qty * pe.LB_PER_TON
+            wbasis = f"{qty:g} tons x {pe.LB_PER_TON:,} lb"
         elif unit in ("coil", "tl"):
             weight = qty * pe.COIL_TL_WEIGHT_LB
             wbasis = f"{qty:g} {'coil' if unit == 'coil' else 'TL'} x {pe.COIL_TL_WEIGHT_LB:,} lb"

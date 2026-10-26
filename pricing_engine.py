@@ -35,7 +35,8 @@ def thickness_label(code):
     return THICKNESS_DISPLAY.get(c, c)
 # Assumed average weight of one coil or one truckload (placeholder until refined).
 COIL_TL_WEIGHT_LB = 46000
-QUANTITY_UNITS = ("pieces", "lbs", "coil", "tl")
+QUANTITY_UNITS = ("pieces", "lbs", "tons", "coil", "tl")
+LB_PER_TON = 2000
 
 # Only these processing extras may be added on top of this price list.
 ALLOWED_EXTRAS = ("P&O", "Temper Pass", "Thickness Adder for 16 ga")
@@ -137,6 +138,9 @@ def compute_line(product, length_in, qty, *, unit="pieces", custom_length=False,
     if unit == "lbs":
         weight = qty
         basis = f"{qty:,.0f} lb"
+    elif unit == "tons":
+        weight = qty * LB_PER_TON
+        basis = f"{qty:g} tons x {LB_PER_TON:,} lb"
     elif unit in ("coil", "tl"):
         weight = qty * COIL_TL_WEIGHT_LB
         label = "coil" if unit == "coil" else "TL"
