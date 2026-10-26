@@ -374,12 +374,26 @@ def _offsheet_result(line):
     }
 
 
-def _inventory_watch(interval=600):
-    """Background: re-import inventory whenever the export file is re-saved."""
+def _inventory_watch(check_interval=600):
+    """Keep inventory fresh with no manual action. When the live SQL Server source is
+    the source of truth (same DB + query as the Inventory Coil Projections workbook),
+    re-pull it on a timer so a long-running server never serves stale stock; otherwise
+    fall back to watching the export file and re-importing when it is re-saved.
+    Re-pull cadence is PRICING_INV_DB_REFRESH_MIN minutes (default 60)."""
+    try:
+        db_interval = max(60.0, float(os.environ.get("PRICING_INV_DB_REFRESH_MIN", "60")) * 60.0)
+    except ValueError:
+        db_interval = 3600.0
+    last_db = time.time()   # _warmup already pulled live at startup
     while True:
-        time.sleep(interval)
+        time.sleep(check_interval)
         try:
-            if inventory.maybe_auto_import():
+            if inventory.db_available():
+                if time.time() - last_db >= db_interval:
+                    inventory.import_inventory_from_db()
+                    last_db = time.time()
+                    print("Inventory auto-refreshed live from the database.")
+            elif inventory.maybe_auto_import():
                 print("Inventory auto-refreshed from updated export.")
         except Exception as exc:
             print("Inventory auto-refresh skipped:", exc)
