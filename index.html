@@ -183,6 +183,9 @@
       <span id="invnote" class="sub2"></span>
     </div>
     <div class="basis no-print">
+      <label><input type="checkbox" id="mmu"> Domestic MMU required (+$5/cwt)</label>
+    </div>
+    <div class="basis no-print">
       <label><input type="checkbox" id="showhist"> Show price history for this customer (last sold / quoted per item)</label>
     </div>
     <table id="qtable">
@@ -522,6 +525,7 @@ function currentKey(){
   return row?row.key:null;
 }
 function basis(){ return document.querySelector('input[name="basis"]:checked').value; }
+function mmuOn(){ return !!($("mmu")&&$("mmu").checked); }
 
 let LINES=[];
 let EDITING=null;
@@ -578,7 +582,7 @@ async function refresh(){
   let res;
   try{
     res=await (await fetch("/api/quote",{method:"POST",headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({lines:LINES,adder_basis:basis(),use_inventory:true,destination:$("dest").value,region_mode:$("regionmode").value,customer_name:$("custselect").value})})).json();
+      body:JSON.stringify({lines:LINES,adder_basis:basis(),use_inventory:true,destination:$("dest").value,region_mode:$("regionmode").value,customer_name:$("custselect").value,domestic_mmu:mmuOn()})})).json();
   }catch(e){ res=null; }
   if(!res||!Array.isArray(res.lines)){
     $("formmsg").textContent=(res&&res.error?("Pricing error: "+res.error):"Couldn’t price this line.")+" — if you just updated the app, close the server window and relaunch.";
@@ -668,6 +672,7 @@ $("reimport").onclick=async()=>{
 };
 $("dest").onchange=()=>{ if($("destnote")) $("destnote").textContent=""; refresh(); };
 $("regionmode").onchange=refresh;
+if($("mmu")) $("mmu").onchange=refresh;
 $("custselect").onchange=()=>{applyCustomerRegion();showCustNote();refresh();};
 $("cu_save").onclick=async()=>{
   const body={name:$("cu_name").value,segment:$("cu_segment").value,playbook:parseInt($("cu_playbook").value),credit:$("cu_credit").value};
@@ -753,7 +758,7 @@ $("savecost").onclick=async()=>{
 $("savequote").onclick=async()=>{
   if(!LINES.length) return;
   const body={customer:$("customer").value,quote_no:$("quoteno").value,grand_total:window.LAST_GRAND||0,
-     quote:{lines:LINES,adder_basis:basis(),use_inventory:true,destination:$("dest").value,region_mode:$("regionmode").value,customer_name:$("custselect").value}};
+     quote:{lines:LINES,adder_basis:basis(),use_inventory:true,destination:$("dest").value,region_mode:$("regionmode").value,customer_name:$("custselect").value,domestic_mmu:mmuOn()}};
   const r=await (await fetch("/api/quotes",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)})).json();
   $("savemsg").textContent=r.id?("Saved #"+r.id):"Save failed";
   setTimeout(()=>{$("savemsg").textContent="";},2500);
@@ -766,7 +771,7 @@ if($("dljournal")) $("dljournal").onclick=async()=>{
 $("exportxlsx").onclick=async()=>{
   if(!LINES.length) return;
   const m=$("savemsg"); m.textContent="Building Excel…";
-  const body={lines:LINES,adder_basis:basis(),use_inventory:true,destination:$("dest").value,region_mode:$("regionmode").value,customer_name:$("custselect").value,with_history:!!($("showhist")&&$("showhist").checked)};
+  const body={lines:LINES,adder_basis:basis(),use_inventory:true,destination:$("dest").value,region_mode:$("regionmode").value,customer_name:$("custselect").value,domestic_mmu:mmuOn(),with_history:!!($("showhist")&&$("showhist").checked)};
   try{
     const resp=await fetch("/api/export-quote",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
     if(!resp.ok) throw new Error("export failed");
@@ -975,6 +980,7 @@ window.openQuote=async id=>{
   $("customer").value=q.customer||""; $("quoteno").value=q.quote_no||"";
   if($("dest")) $("dest").value=p.destination||"";
   if($("regionmode")) $("regionmode").value=p.region_mode||"both";
+  if($("mmu")) $("mmu").checked=!!p.domestic_mmu;
   if($("custselect")) { $("custselect").value=p.customer_name||""; showCustNote(); }
   const rb=document.querySelector('input[name="basis"][value="'+(p.adder_basis||"line")+'"]'); if(rb) rb.checked=true;
   LINES=(p.lines||[]).slice();

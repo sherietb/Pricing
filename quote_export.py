@@ -33,6 +33,7 @@ COLUMNS = [
     ("Inventory position", "adder"),
     ("PB tier", "adder"), ("PB adder", "adder"), ("Segmentation", "adder"),
     ("Credit", "adder"), ("Dynamic margin", "adder"),
+    ("Domestic MMU", "adder"),
     ("Custom-length adder", "adder"), ("Extras", "adder"),
 ]
 HIST_COLUMNS = [
@@ -57,6 +58,7 @@ def _adder_column(label):
     if l.startswith("Segment"):             return "Segmentation"
     if l.startswith("Credit"):              return "Credit"
     if l.startswith("Dynamic margin"):      return "Dynamic margin"
+    if l.startswith("Domestic MMU"):        return "Domestic MMU"
     if l.startswith("Extra:"):              return "Extras"
     return None
 
@@ -248,7 +250,7 @@ def build_workbook(payload, result, get_product, playbook=2, pb_adder=0.0, histo
             if h in ("Avg Cost $/cwt (avail)", "Avg Cost $/cwt (incoming)", "Suggested $/cwt",
                      "Base $/cwt", "Volume adder", "Region - Freight", "Region - Competitive",
                      "Inventory position", "PB adder", "Segmentation", "Credit",
-                     "Dynamic margin", "Custom-length adder", "Extras",
+                     "Dynamic margin", "Domestic MMU", "Custom-length adder", "Extras",
                      "Last sold $/cwt", "Last quote $/cwt") and isinstance(row[h], (int, float)):
                 cell.number_format = '$#,##0.00;[Red]-$#,##0.00'
             elif h == "Total Price" and isinstance(row[h], (int, float)):

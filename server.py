@@ -250,6 +250,8 @@ class Handler(BaseHTTPRequestHandler):
             if region_mode in ("comp", "both") and fr["comp_cwt"]:
                 region_adjs.append({"label": "Region (competitive): " + region, "cwt": fr["comp_cwt"]})
         region_adjs += db.customer_adjustments(payload.get("customer_name"))   # playbook + credit (stack)
+        if payload.get("domestic_mmu"):                 # domestic melted & manufactured requirement
+            region_adjs.append({"label": "Domestic MMU", "cwt": 5.0})
         min_spread = costing.get_min_spread()
 
         def price(line, tier_weight=None):
