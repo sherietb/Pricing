@@ -319,12 +319,14 @@ def import_inventory_from_db():
 
         # form-aware accumulation: coil forms -> grade|width|thickness (a master coil is
         # a specific gauge, so positions are per thickness); discrete forms -> exact SKU.
+        # Thickness is normalized (_tkey) so '1-1/4"' on a product matches '114' in stock.
         cls = FORM_CLASS.get(form)
+        tcode = _tkey(size_s)
         if cls == "coil":
-            a = coil_acc.setdefault(g + "|" + width + "|" + size_s, _blank())
+            a = coil_acc.setdefault(g + "|" + width + "|" + tcode, _blank())
             a["grade"], a["width"], a["size"] = g, width, size_s
         elif cls == "disc":
-            a = disc_acc.setdefault(key, _blank())
+            a = disc_acc.setdefault("-".join(p for p in (tcode, width, g) if p), _blank())
             a["grade"], a["size"], a["width"] = g, size_s, width
         else:
             a = None
@@ -467,6 +469,16 @@ def _wkey(width):
         return str(width).strip()
 
 
+def _tkey(thickness):
+    """Canonical thickness for inventory matching. The products table stores some
+    sizes as display strings ('1-1/4"', '2"') while the live inventory stores codes
+    ('114', '2'); strip quotes/spaces/dashes/slashes so both sides agree."""
+    s = str(thickness or "").strip()
+    for ch in ' "-/':
+        s = s.replace(ch, "")
+    return s
+
+
 def default_form(thickness, grade, width):
     """Default form when the rep leaves Form = Auto.
       786 grade (floor plate): <=1/2" thick AND <=84" wide -> FPCO (coil), else FP (stock).
@@ -493,7 +505,7 @@ def get_inventory_for(thickness, width, grade, form=None, rules=None):
     cls = FORM_CLASS.get(form, "disc")
     scope = "coil" if cls == "coil" else "sku"
     wk = _wkey(width)
-    tk = str(thickness).strip()
+    tk = _tkey(thickness)
     poskey = (grade + "|" + wk + "|" + tk) if scope == "coil" else \
         "-".join(p for p in (tk, wk, grade) if p)
     conn = connect()
