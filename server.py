@@ -120,6 +120,7 @@ class Handler(BaseHTTPRequestHandler):
             data["cost_config"] = costing.get_config()
             data["customers"] = db.list_customers()
             data["cust_config"] = db.get_cust_config()
+            data["pricing_config"] = db.get_pricing_config()
             data["logic_version"] = db.LOGIC_VERSION
             self._send(200, data)
         else:
@@ -183,6 +184,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(200, {"deleted": db.delete_customer(self._read_json().get("name"))})
             elif self.path == "/api/admin/customer-config":
                 self._send(200, {"cust_config": db.set_cust_config(self._read_json())})
+            elif self.path == "/api/admin/pricing-config":
+                self._send(200, {"pricing_config": db.set_pricing_config(self._read_json())})
             elif self.path == "/api/admin/import-customers":
                 self._send(200, db.import_customers_csv())
             elif self.path == "/api/admin/pull-customers-db":
@@ -253,6 +256,12 @@ class Handler(BaseHTTPRequestHandler):
         if payload.get("domestic_mmu"):                 # domestic melted & manufactured requirement
             region_adjs.append({"label": "Domestic MMU", "cwt": 5.0})
         min_spread = costing.get_min_spread()
+        # Stacking rule for the custom-length adder: a per-quote override wins if present,
+        # otherwise fall back to the Admin global default.
+        if "stack_length" in payload:
+            stack_length = bool(payload.get("stack_length"))
+        else:
+            stack_length = bool(db.get_pricing_config().get("stack_length_adder", 1.0))
 
         def price(line, tier_weight=None):
             if line.get("offsheet") or not line.get("key"):
@@ -295,6 +304,7 @@ class Handler(BaseHTTPRequestHandler):
                 inv_adjustment=adj,
                 extra_adjustments=region_adjs,
                 tier_weight=tier_weight,
+                stack_length=stack_length,
                 stock_tiers=stock, length_tiers=length, extras_catalog=extras_catalog,
             )
             res["inventory"] = inv

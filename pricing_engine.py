@@ -13,7 +13,9 @@ Confirmed rules (see project notes):
         - over 20,000 lb  -> no adder ($0)
         - a boundary weight rolls UP to the looser (lower) adder
           (exactly 10,000 lb -> the "20,000 and under" $3 tier; exactly 20,000 -> $3)
-  * Stock and custom-length adders can stack on the same line.
+  * Stock and custom-length adders can stack on the same line, UNLESS stacking is
+    turned off (stack_length=False), in which case a custom-length line takes only
+    the stock-weight adder. Default is to stack (historical behavior).
   * Only P&O, Temper Pass, and the 16-ga thickness adder are selectable extras
     (grade and slit-edge are already baked into the base price -> no double charge).
 """
@@ -95,7 +97,8 @@ def tier_adder(weight_lb, tiers):
 
 
 def compute_line(product, length_in, qty, *, unit="pieces", custom_length=False, extras=(),
-                 inv_adjustment=None, freight=None, extra_adjustments=None, tier_weight=None, stock_tiers, length_tiers, extras_catalog):
+                 inv_adjustment=None, freight=None, extra_adjustments=None, tier_weight=None,
+                 stack_length=True, stock_tiers, length_tiers, extras_catalog):
     """
     Price a single quote line.
 
@@ -173,7 +176,7 @@ def compute_line(product, length_in, qty, *, unit="pieces", custom_length=False,
     if sadd:
         breakdown.append({"label": f"Stock adder ({slabel})", "cwt": round(sadd, 4)})
 
-    if custom_length:
+    if custom_length and stack_length:
         llabel, ladd = tier_adder(tw, length_tiers)
         if ladd:
             breakdown.append({"label": f"Custom-length adder ({llabel})", "cwt": round(ladd, 4)})

@@ -231,6 +231,7 @@ CREATE TABLE IF NOT EXISTS customers (
     dyn_cwt REAL DEFAULT 0, region TEXT, region_locked INTEGER DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS cust_config (k TEXT PRIMARY KEY, v REAL);
+CREATE TABLE IF NOT EXISTS pricing_config (k TEXT PRIMARY KEY, v REAL);
 -- Price fallbacks: an item with no sheet price borrows another item's listed price.
 -- As soon as own_key gets a real numeric price on the sheet, that wins (the alias is
 -- only consulted when the requested item has no usable price of its own).
@@ -259,6 +260,11 @@ CUSTOMER_CONFIG = {"pb1_cwt": -2.0, "pb2_cwt": 0.0, "pb3_cwt": 2.0,
                    # on price (PRC) gets up to dyn_cap; at/above dyn_prc_threshold price-loss
                    # rate they get $0. Needs >= dyn_min_sample decisive (won+lost) quotes.
                    "dyn_prc_threshold": 0.25, "dyn_min_sample": 3.0}
+
+# Global pricing-behavior defaults, tunable in Admin; a per-quote toggle can override.
+# stack_length_adder: 1 = the custom-length adder stacks on top of the stock-weight adder
+# (default / historical behavior); 0 = custom-length lines take ONLY the stock adder.
+PRICING_CONFIG = {"stack_length_adder": 1.0}
 
 
 def connect():
@@ -652,6 +658,30 @@ def set_cust_config(updates):
     conn.commit()
     conn.close()
     return get_cust_config()
+
+
+def get_pricing_config():
+    conn = connect()
+    conn.executescript(SCHEMA)
+    have = {r["k"]: r["v"] for r in conn.execute("SELECT k, v FROM pricing_config")}
+    for k, v in PRICING_CONFIG.items():
+        if k not in have:
+            conn.execute("INSERT INTO pricing_config VALUES (?,?)", (k, v))
+    conn.commit()
+    cfg = {r["k"]: r["v"] for r in conn.execute("SELECT k, v FROM pricing_config")}
+    conn.close()
+    return {**PRICING_CONFIG, **cfg}
+
+
+def set_pricing_config(updates):
+    conn = connect()
+    conn.executescript(SCHEMA)
+    for k in PRICING_CONFIG:
+        if k in updates and updates[k] is not None:
+            conn.execute("INSERT OR REPLACE INTO pricing_config VALUES (?,?)", (k, float(updates[k])))
+    conn.commit()
+    conn.close()
+    return get_pricing_config()
 
 
 def list_customers():

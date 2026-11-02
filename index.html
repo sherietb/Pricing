@@ -190,6 +190,10 @@
       <label><input type="checkbox" id="mmu"> Domestic MMU required (+$5/cwt)</label>
     </div>
     <div class="basis no-print">
+      <label><input type="checkbox" id="stacklen"> Stack custom-length adder on top of the stock adder</label>
+      <span class="sub2">Unchecked = custom-length lines take only the stock adder. Defaults to the Admin setting.</span>
+    </div>
+    <div class="basis no-print">
       <label><input type="checkbox" id="showhist"> Show price history for this customer (last sold / quoted per item)</label>
     </div>
     <table id="qtable">
@@ -297,6 +301,17 @@
         <div style="align-self:end"><button class="ghost" id="reimport">Re-import Excel</button></div>
       </div>
       <div class="msg" id="adminmsg"></div>
+      <hr style="border:none;border-top:1px solid var(--line);margin:16px 0">
+      <div class="secttl" style="margin-bottom:8px">Adder stacking — stock vs. custom-length</div>
+      <div style="font-size:12px;color:var(--muted);margin-bottom:10px;line-height:1.6">
+        Sets the default for every quote. A per-quote checkbox on the quote screen can override it.
+      </div>
+      <div class="grid">
+        <div style="grid-column:1/-1"><label><input type="checkbox" id="adm_stacklen"> Stack the custom-length adder on top of the stock-weight adder (default)</label>
+          <div class="sub2">Unchecked = custom-length lines take <b>only</b> the stock-weight adder.</div></div>
+        <div style="align-self:end"><button class="ghost" id="savestacklen">Save stacking default</button></div>
+      </div>
+      <div class="msg" id="stacklenmsg"></div>
       <hr style="border:none;border-top:1px solid var(--line);margin:16px 0">
       <div class="secttl" style="margin-bottom:8px">Inventory position ranking — separate for CTL &amp; discrete plate (months-on-hand)</div>
       <div style="font-size:12px;color:var(--muted);margin-bottom:10px;line-height:1.6;background:var(--panel,#f8fafc);border:1px solid var(--line);border-radius:8px;padding:8px 10px">
@@ -464,6 +479,10 @@ async function boot(){
   const ucc=DATA.cust_config||{};
   if($("pb1")){$("pb1").value=ucc.pb1_cwt;$("pb2").value=ucc.pb2_cwt;$("pb3").value=ucc.pb3_cwt;$("credit_high").value=ucc.credit_high_cwt;}
   if($("dyn_step")){$("dyn_step").value=ucc.dyn_step_cwt;$("dyn_cap").value=ucc.dyn_cap_cwt;$("dyn_loss").value=ucc.dyn_loss_cwt;}
+  const pcc=DATA.pricing_config||{};
+  const stackDefault=(pcc.stack_length_adder==null)?true:(pcc.stack_length_adder!=0);
+  if($("adm_stacklen")) $("adm_stacklen").checked=stackDefault;        // Admin control mirrors stored default
+  if($("stacklen")&&!window._stacklenTouched) $("stacklen").checked=stackDefault;  // per-quote defaults to it until the rep changes it
   if($("custbody")) $("custbody").innerHTML=custs.map(c=>"<tr><td>"+c.name+"</td><td>"+(c.segment||"—")+
      '</td><td class="num">'+c.playbook+"</td><td>"+(c.credit==="high"?"High risk":"Low risk")+"</td>"+
      '<td class="num">'+(c.dyn_cwt?("+"+(+c.dyn_cwt).toFixed(2)):"—")+"</td>"+
@@ -539,6 +558,7 @@ function currentKey(){
 }
 function basis(){ return document.querySelector('input[name="basis"]:checked').value; }
 function mmuOn(){ return !!($("mmu")&&$("mmu").checked); }
+function stackLenOn(){ return !!($("stacklen")&&$("stacklen").checked); }
 
 let LINES=[];
 let EDITING=null;
@@ -595,7 +615,7 @@ async function refresh(){
   let res;
   try{
     res=await (await fetch("/api/quote",{method:"POST",headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({lines:LINES,adder_basis:basis(),use_inventory:true,destination:$("dest").value,region_mode:$("regionmode").value,customer_name:$("custselect").value,domestic_mmu:mmuOn()})})).json();
+      body:JSON.stringify({lines:LINES,adder_basis:basis(),use_inventory:true,destination:$("dest").value,region_mode:$("regionmode").value,customer_name:$("custselect").value,domestic_mmu:mmuOn(),stack_length:stackLenOn()})})).json();
   }catch(e){ res=null; }
   if(!res||!Array.isArray(res.lines)){
     $("formmsg").textContent=(res&&res.error?("Pricing error: "+res.error):"Couldn’t price this line.")+" — if you just updated the app, close the server window and relaunch.";
@@ -686,6 +706,16 @@ $("reimport").onclick=async()=>{
 $("dest").onchange=()=>{ if($("destnote")) $("destnote").textContent=""; refresh(); };
 $("regionmode").onchange=refresh;
 if($("mmu")) $("mmu").onchange=refresh;
+if($("stacklen")) $("stacklen").onchange=()=>{ window._stacklenTouched=true; refresh(); };
+if($("savestacklen")) $("savestacklen").onclick=async()=>{
+  const m=$("stacklenmsg"); m.className="msg"; m.textContent="Saving…";
+  try{
+    const r=await (await fetch("/api/admin/pricing-config",{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({stack_length_adder:$("adm_stacklen").checked?1:0})})).json();
+    m.className="msg ok"; m.textContent="Saved. Default stacking: "+($("adm_stacklen").checked?"on (stack)":"off (stock adder only)")+".";
+    window._stacklenTouched=false; await boot();   // let the per-quote toggle pick up the new default
+  }catch(e){ m.className="msg err"; m.textContent="Couldn’t save — relaunch the server if you just updated the app."; }
+};
 $("custselect").onchange=()=>{applyCustomerRegion();showCustNote();refresh();};
 $("cu_save").onclick=async()=>{
   const body={name:$("cu_name").value,segment:$("cu_segment").value,playbook:parseInt($("cu_playbook").value),credit:$("cu_credit").value};
@@ -771,7 +801,7 @@ $("savecost").onclick=async()=>{
 $("savequote").onclick=async()=>{
   if(!LINES.length) return;
   const body={customer:$("customer").value,quote_no:$("quoteno").value,grand_total:window.LAST_GRAND||0,
-     quote:{lines:LINES,adder_basis:basis(),use_inventory:true,destination:$("dest").value,region_mode:$("regionmode").value,customer_name:$("custselect").value,domestic_mmu:mmuOn()}};
+     quote:{lines:LINES,adder_basis:basis(),use_inventory:true,destination:$("dest").value,region_mode:$("regionmode").value,customer_name:$("custselect").value,domestic_mmu:mmuOn(),stack_length:stackLenOn()}};
   const r=await (await fetch("/api/quotes",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)})).json();
   $("savemsg").textContent=r.id?("Saved #"+r.id):"Save failed";
   setTimeout(()=>{$("savemsg").textContent="";},2500);
@@ -784,7 +814,7 @@ if($("dljournal")) $("dljournal").onclick=async()=>{
 $("exportxlsx").onclick=async()=>{
   if(!LINES.length) return;
   const m=$("savemsg"); m.textContent="Building Excel…";
-  const body={lines:LINES,adder_basis:basis(),use_inventory:true,destination:$("dest").value,region_mode:$("regionmode").value,customer_name:$("custselect").value,domestic_mmu:mmuOn(),with_history:!!($("showhist")&&$("showhist").checked)};
+  const body={lines:LINES,adder_basis:basis(),use_inventory:true,destination:$("dest").value,region_mode:$("regionmode").value,customer_name:$("custselect").value,domestic_mmu:mmuOn(),stack_length:stackLenOn(),with_history:!!($("showhist")&&$("showhist").checked)};
   try{
     const resp=await fetch("/api/export-quote",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
     if(!resp.ok) throw new Error("export failed");
@@ -994,6 +1024,7 @@ window.openQuote=async id=>{
   if($("dest")) $("dest").value=p.destination||"";
   if($("regionmode")) $("regionmode").value=p.region_mode||"both";
   if($("mmu")) $("mmu").checked=!!p.domestic_mmu;
+  if($("stacklen")&&("stack_length" in p)){ $("stacklen").checked=!!p.stack_length; window._stacklenTouched=true; }
   if($("custselect")) { $("custselect").value=p.customer_name||""; showCustNote(); }
   const rb=document.querySelector('input[name="basis"][value="'+(p.adder_basis||"line")+'"]'); if(rb) rb.checked=true;
   LINES=(p.lines||[]).slice();
