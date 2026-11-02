@@ -355,18 +355,7 @@
         <div><label>Credit High Risk $/cwt</label><input id="credit_high" type="number" step="0.25"></div>
         <div style="align-self:end"><button class="ghost" id="cu_saveconfig">Save amounts</button></div>
       </div>
-      <div class="secttl" style="margin:12px 0 6px">Dynamic margin — auto-ratchets per customer as quotes are won/lost</div>
-      <div class="grid">
-        <div><label>Step per win $/cwt</label><input id="dyn_step" type="number" step="0.25"></div>
-        <div><label>Cap (max) $/cwt</label><input id="dyn_cap" type="number" step="0.25"></div>
-        <div><label>Back-off per loss $/cwt</label><input id="dyn_loss" type="number" step="0.25"></div>
-        <div style="align-self:end"><button class="ghost" id="cu_savedyn">Save dynamic</button></div>
-      </div>
-      <table style="margin-top:10px"><thead><tr><th>Customer</th><th>Segment</th><th class="num">Playbook</th><th>Credit</th><th class="num">Dynamic $/cwt</th><th></th></tr></thead>
-        <tbody id="custbody"></tbody></table>
-      <div class="msg" id="custmsg"></div>
-      <hr style="border:none;border-top:1px solid var(--line);margin:16px 0">
-      <div class="secttl" style="margin-bottom:8px">Margin (CRU Spread over material cost)</div>
+      <div class="secttl" style="margin:12px 0 6px">Margin (CRU Spread over material cost)</div>
       <div class="grid">
         <div><label>HRC base $/cwt</label><input id="c_hrc" type="number" step="0.05"></div>
         <div><label>Plate base 48&ndash;72"</label><input id="c_narrow" type="number" step="0.05"></div>
@@ -381,6 +370,16 @@
         <div style="align-self:end"><button class="ghost" id="savecost">Save cost</button></div>
       </div>
       <div class="msg" id="costmsg"></div>
+      <div class="secttl" style="margin:12px 0 6px">Dynamic margin — auto-ratchets per customer as quotes are won/lost</div>
+      <div class="grid">
+        <div><label>Step per win $/cwt</label><input id="dyn_step" type="number" step="0.25"></div>
+        <div><label>Cap (max) $/cwt</label><input id="dyn_cap" type="number" step="0.25"></div>
+        <div><label>Back-off per loss $/cwt</label><input id="dyn_loss" type="number" step="0.25"></div>
+        <div style="align-self:end"><button class="ghost" id="cu_savedyn">Save dynamic</button></div>
+      </div>
+      <table style="margin-top:10px"><thead><tr><th>Customer</th><th>Segment</th><th class="num">Playbook</th><th>Credit</th><th class="num">Dynamic $/cwt</th><th></th></tr></thead>
+        <tbody id="custbody"></tbody></table>
+      <div class="msg" id="custmsg"></div>
     </details>
   </div>
 </main>
