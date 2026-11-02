@@ -332,22 +332,6 @@
       </div>
       <div class="msg" id="invmsg"></div>
       <hr style="border:none;border-top:1px solid var(--line);margin:16px 0">
-      <div class="secttl" style="margin-bottom:8px">Margin (CRU Spread over material cost)</div>
-      <div class="grid">
-        <div><label>HRC base $/cwt</label><input id="c_hrc" type="number" step="0.05"></div>
-        <div><label>Plate base 48&ndash;72"</label><input id="c_narrow" type="number" step="0.05"></div>
-        <div><label>Plate base 84&ndash;96"</label><input id="c_wide" type="number" step="0.05"></div>
-        <div><label>Plate base 120"</label><input id="c_120" type="number" step="0.05"></div>
-        <div><label>Min CRU Spread % (floor)</label><input id="c_minspread" type="number" step="1"></div>
-        <div style="align-self:end"><button class="ghost" id="savespread">Save cost settings</button></div>
-      </div>
-      <div class="grid" style="margin-top:10px">
-        <div><label>Product key (cost override)</label><input id="c_key" type="text" placeholder="e.g. 316-48-572-50"></div>
-        <div><label>Material cost $/cwt</label><input id="c_cost" type="number" step="0.01"></div>
-        <div style="align-self:end"><button class="ghost" id="savecost">Save cost</button></div>
-      </div>
-      <div class="msg" id="costmsg"></div>
-      <hr style="border:none;border-top:1px solid var(--line);margin:16px 0">
       <div class="secttl" style="margin-bottom:8px">Customers — playbook &amp; credit</div>
       <div class="grid">
         <div><label>Customer name</label><input id="cu_name" type="text" placeholder="e.g. GST"></div>
@@ -381,6 +365,22 @@
       <table style="margin-top:10px"><thead><tr><th>Customer</th><th>Segment</th><th class="num">Playbook</th><th>Credit</th><th class="num">Dynamic $/cwt</th><th></th></tr></thead>
         <tbody id="custbody"></tbody></table>
       <div class="msg" id="custmsg"></div>
+      <hr style="border:none;border-top:1px solid var(--line);margin:16px 0">
+      <div class="secttl" style="margin-bottom:8px">Margin (CRU Spread over material cost)</div>
+      <div class="grid">
+        <div><label>HRC base $/cwt</label><input id="c_hrc" type="number" step="0.05"></div>
+        <div><label>Plate base 48&ndash;72"</label><input id="c_narrow" type="number" step="0.05"></div>
+        <div><label>Plate base 84&ndash;96"</label><input id="c_wide" type="number" step="0.05"></div>
+        <div><label>Plate base 120"</label><input id="c_120" type="number" step="0.05"></div>
+        <div><label>Min CRU Spread % (floor)</label><input id="c_minspread" type="number" step="1"></div>
+        <div style="align-self:end"><button class="ghost" id="savespread">Save cost settings</button></div>
+      </div>
+      <div class="grid" style="margin-top:10px">
+        <div><label>Product key (cost override)</label><input id="c_key" type="text" placeholder="e.g. 316-48-572-50"></div>
+        <div><label>Material cost $/cwt</label><input id="c_cost" type="number" step="0.01"></div>
+        <div style="align-self:end"><button class="ghost" id="savecost">Save cost</button></div>
+      </div>
+      <div class="msg" id="costmsg"></div>
     </details>
   </div>
 </main>
